@@ -1,152 +1,148 @@
 ---
 name: langgraph-loop-architect
-description: Design or review reusable LangGraph and tool-using agent architectures for business scenarios by choosing among full tool exposure, progressive domain disclosure, dynamic retrieval, deterministic workflows, ReAct loops, and hybrid Supervisor-Worker systems. Use when a user provides a business process and wants an agent methodology, tool-routing strategy, multi-agent topology, JSON state contracts, dependency handling, implementation plan, or architecture tradeoff analysis; do not use for an ordinary one-off prompt or isolated API call with no orchestration decision.
+description: 为包含 LLM 和工具调用的业务场景设计或审查可复用的 LangGraph/Agent 架构，在全量工具暴露、渐进式领域披露、动态检索、确定性工作流、ReAct Loop 和 Supervisor-Worker 混合架构之间选择。适用于 Agent 方法论、工具路由、多 Agent 拓扑、JSON 状态契约、动态依赖、实施计划和架构权衡；不用于没有编排决策的一次性 Prompt 或单个 API 调用。
 ---
 
-# LangGraph Loop Architect
+# LangGraph Loop 架构师
 
-Turn a business scenario into the smallest agent architecture that meets its accuracy, latency, cost, security, and operability requirements. Do not assume that LangGraph, multiple agents, or a registry is automatically necessary.
+把 AI 业务场景转成满足准确率、延迟、成本、安全和运维要求的最小 Agent 架构。不得预设一定需要 LangGraph、多 Agent 或 Tool Registry。
 
-## Core outcome
+## 核心产出
 
-Produce an evidence-based architecture decision that answers:
+方案必须回答：
 
-1. What decision or user outcome the system owns.
-2. Which facts and side effects must come from tools rather than an LLM.
-3. Which tool-exposure pattern fits the tool count, domain shape, dependency uncertainty, and latency budget.
-4. What the Supervisor, Workers, deterministic services, and humans each own.
-5. How typed JSON moves through the loop and is validated.
-6. How optional and newly discovered dependencies are resolved without hard-coding every path.
-7. How the design stops, recovers, degrades, is tested, and is rolled out.
+1. 系统负责哪个用户结果或业务决定；
+2. 哪些事实和副作用必须来自 Tool，而不能由 LLM 编造；
+3. 工具规模、领域、依赖和延迟适合哪种披露/编排模式；
+4. Supervisor、Worker、确定性服务和人工分别负责什么；
+5. 类型化 JSON 如何在 Loop 中流转和校验；
+6. 如何处理可选依赖和运行时新发现依赖；
+7. 如何停止、恢复、降级、测试和上线。
 
-## Reference routing
+## 参考资料路由
 
-Read only the references needed for the request:
+- 选择或比较编排策略时，必须读 [references/architecture-selection.md](references/architecture-selection.md)。
+- 生产架构、能力清单或适用性边界，读 [references/capability-boundaries.md](references/capability-boundaries.md)。
+- Supervisor/Worker、渐进披露、可选依赖、波次、checkpoint 或人工门禁，读 [references/supervisor-loop.md](references/supervisor-loop.md)。
+- JSON、状态、Agent/Tool 接口、持久化、重放和审计，读 [references/json-contracts.md](references/json-contracts.md)。
+- Retry、Fallback、Degrade、Rollback、Compensate、Reconcile、Partial Result 和 HumanTask，读 [references/resilience-human-control.md](references/resilience-human-control.md)。
+- 实施、E2E、性能、安全、可观测性、灰度和生产验收，读 [references/evaluation-playbook.md](references/evaluation-playbook.md)。
+- 输出完整技术方案或 Plan，读 [references/delivery-template.md](references/delivery-template.md)。
+- 只有案例能帮助判断时才读 [references/worked-examples.md](references/worked-examples.md)。
 
-- Always read [references/architecture-selection.md](references/architecture-selection.md) when choosing or comparing orchestration strategies.
-- Read [references/capability-boundaries.md](references/capability-boundaries.md) for every production-oriented architecture or whenever the user asks what capabilities are required, optional, unavailable, or out of scope. It prevents example-specific capabilities such as ASR/TTS from becoming universal requirements.
-- Read [references/supervisor-loop.md](references/supervisor-loop.md) for Supervisor/Worker ownership, progressive disclosure, optional dependencies, parallel waves, checkpoints, human gates, or LangGraph topology.
-- Read [references/json-contracts.md](references/json-contracts.md) whenever the user asks for JSON design, state transitions, APIs between agents, persistence, replay, or auditability.
-- Read [references/resilience-human-control.md](references/resilience-human-control.md) for retry, fallback, degradation, rollback, compensation, reconciliation, partial results, side effects, or human intervention.
-- Read [references/evaluation-playbook.md](references/evaluation-playbook.md) for implementation plans, E2E tests, performance, safety, observability, rollout, or production readiness.
-- Read [references/delivery-template.md](references/delivery-template.md) when producing a complete technical proposal or `/plan`-style deliverable.
-- Read [references/worked-examples.md](references/worked-examples.md) only when examples would materially help select or explain a pattern.
+## 工作方法
 
-## Working method
+### 1. 归一化场景
 
-### 1. Normalize the scenario
+提取或合理推断：
 
-Extract or infer, while marking assumptions:
+- 参与者、客户、渠道、Locale 和输入/输出模态；
+- 业务目标和成功标准；
+- Fact Authority、API、模型、Tool 和 Side Effect；
+- 总 Tool 数、每领域 Tool 数、领域数和变化频率；
+- 固定、可选、条件和运行时发现依赖；
+- 延迟、吞吐、成本、上下文、隐私、审计和可用性；
+- 人工决定、不可接受失败、当前实现和降级期望。
 
-- actor, customer, channel, locale, and requested modalities;
-- decision to be made and success criteria;
-- facts, data authorities, APIs, models, and side effects;
-- total tool count, tools per domain, domain count, and tool-change frequency;
-- known hard dependencies, optional dependencies, and dependencies discoverable only at runtime;
-- latency, throughput, cost, context, privacy, audit, and availability constraints;
-- required human decisions and unacceptable failure modes;
-- current implementation, deployment environment, and fallback expectations.
+每项能力标记 required、optional、deferred 或 not_applicable。案例里出现的语音、图像和专项模型不能自动升级为框架要求。
 
-For every candidate capability, classify it as `required`, `optional`, `deferred`, or `not_applicable`. A modality or specialist service is never required merely because it appears in an example.
+只有缺失信息会实质改变架构时才提问；否则标明假设并继续。
 
-Ask a question only when a missing fact would materially change the architecture. Otherwise state the assumption and continue.
+### 2. 分离确定性与 Agentic 工作
 
-### 2. Separate deterministic and agentic work
+Auth、算术、Permission、TTL、Idempotency、Schema、Allowlist、Transaction 和不可逆 Side Effect Gate 使用普通代码。LLM 只负责歧义理解、规划、语义匹配、本地 Tool 选择、冲突说明、重规划和表达。
 
-Use ordinary code or policy services for authentication, arithmetic, permissions, TTL, idempotency, schema validation, allowlists, transaction boundaries, and irreversible side-effect gates. Use an LLM for ambiguous intent, planning, semantic matching, local tool choice, conflict explanation, replanning, and response composition.
+API Gateway 是接入与安全基础设施，不是 Agent；LangGraph 是状态和控制运行时，不是业务大脑；选择了 Supervisor 模式时，Supervisor 才承担决策。
 
-API Gateway is transport and security infrastructure, not an Agent. LangGraph is the state and control runtime, not the business decision-maker. The Supervisor is the decision-maker only when the selected pattern includes one.
+### 3. 选择工具披露与编排模式
 
-### 3. Select an exposure and orchestration pattern
+至少比较两个合理方案，并给出首选与更简单备选：
 
-Compare at least two plausible patterns from the selection guide. Recommend one primary pattern and one simpler fallback. Do not choose a more complex pattern merely because it appears sophisticated.
+1. 单 Agent 全量 Tool；
+2. 渐进式领域披露 + Domain Worker；
+3. 确定性快路径 + Supervisor Loop + 本地 Tool/Search；
+4. 大规模动态 Tool Retrieval；
+5. 固定确定性 Workflow + 有边界 Agent Node；
+6. 开放式 ReAct/Code Agent Loop。
 
-The main patterns are:
+不要为了显得复杂而选择复杂模式。
 
-1. Full tool exposure to one Agent.
-2. Progressive domain disclosure with Domain Workers.
-3. Hybrid composition: deterministic fast paths plus Supervisor Loop plus domain-local tools or search.
-4. Dynamic tool retrieval for very large or rapidly changing catalogs.
-5. Fixed deterministic workflow with bounded agent nodes.
-6. Open-ended ReAct/code-agent loop for exploratory work.
+### 4. 冻结术语与职责
 
-### 4. Freeze vocabulary and ownership
+画流程前先列出所有运行组件及禁止职责，避免中途突然出现 Registry、Router、Planner、Critic 或 Gateway。
 
-Before drawing the flow, list every runtime component and what it must not do. Avoid introducing an unexplained registry, router, planner, critic, or gateway later. Distinguish a static domain-entry description from a runtime tool registry.
+渐进披露时：
 
-For progressive disclosure, preserve these boundaries:
+- Supervisor 只看 Domain Entry 与 Global State；
+- Worker 只看本领域 Tool Contract；
+- 跨域缺口通过 needed_capabilities 返回 Supervisor；
+- Worker 不直接创建其他 Worker，也不跨域调用；
+- Supervisor 审核每次结果并决定继续或结束；
+- Fact、Money、Permission、Provenance 和 Side Effect 由确定性 Gate 保护。
 
-- Supervisor sees domain entries and global state, not every concrete API.
-- A Domain Worker sees only its local tools and local Tool Contracts.
-- A Worker returns `needed_capabilities` for cross-domain needs; it does not create another Worker or call another domain directly.
-- Supervisor selects the next domain, reviews every result, and decides whether to continue or stop.
-- Deterministic gates authorize facts, permissions, money, media provenance, and side effects.
+### 5. 定义能力边界
 
-### 5. Define capability boundaries
+每项适用能力定义 Owner、Accepts、Provides、Authority、Permission、Side Effect、SLO、Cost、Failure、Fallback、Recovery、Human Trigger、Observability 和 Acceptance。
 
-For each applicable capability, name its owner, accepted inputs, provided outputs, authority, permissions, side-effect class, SLO, cost budget, failure modes, fallback chain, recovery action, human trigger, observability, and acceptance test. Keep non-applicable capabilities out of the runtime design.
+ASR、TTS、Language ID、Translation、OCR、Vision、Image/Video、3D、Payment、Notification 都是条件能力，业务不需要时必须删除。
 
-Treat ASR, TTS, language detection, translation, OCR, vision, image/video generation, 3D rendering, payments, and notifications as scenario-dependent capabilities. Add them only when the user's channels, modalities, or outputs require them.
+### 6. 设计 Loop 与 JSON
 
-### 6. Design the loop and JSON transitions
+~~~text
+Input → Goal → SupervisorDecision → DomainTask → DomainResult
+                                      ↑             ↓
+                                      └── Review ← State Update
+                                                     ↓
+                         Continue / Clarify / Degrade / Human / Finalize
+~~~
 
-Model the observable cycle rather than hidden chain-of-thought:
+保存可观察 Decision Reason、Evidence Reference 和状态变化，不保存私有 Chain-of-thought。
 
-```text
-Input → Goal → Supervisor Decision → Domain Task → Domain Result
-                                         ↑              ↓
-                                         └── Review ← State update
-                                                        ↓
-                             continue / clarify / degrade / approve / finalize
-```
+### 7. 证明动态依赖
 
-Use typed contracts from the JSON reference. Store concise decision reasons, evidence references, and status changes; never request or persist private reasoning traces.
+至少推演：
 
-### 7. Prove dynamic dependency behavior
+- 单领域正常路径；
+- 运行时发现的跨域依赖；
+- 对一个目标必需、对另一个目标可选的输入；
+- Tool Timeout、Stale Fact、Conflict 或 Missing Capability；
+- 需要 Idempotency 或 Human Gate 的高风险副作用。
 
-Simulate at least:
+只有真正独立的任务才放在同一波次。
 
-- a simple happy path;
-- a cross-domain dependency discovered at runtime;
-- an optional input that is required for one goal but unnecessary for another;
-- a tool timeout, stale fact, conflict, or missing capability;
-- an irreversible or high-risk action requiring an idempotency or human gate.
+### 8. 补齐生产设计
 
-Show which tasks are truly independent and may run in the same wave. Do not call dependent work “parallel.”
+定义 Stop Condition、Loop Budget、Retry Owner、Checkpoint、Freshness、Fallback、Observability、Contract/Graph/E2E/Golden Test、安全边界和灰度阶段。用户只要设计时，用纯文本流程和 JSON，不擅自增加框架代码。
 
-### 8. Close production concerns
+## 不可破坏的原则
 
-Define stopping conditions, loop budgets, retry ownership, checkpoint behavior, freshness rules, fallbacks, observability, contract tests, graph tests, golden cases, security boundaries, and rollout stages. If the request is design-only, do not add framework code; use plain-text flow diagrams and JSON examples unless the user requests code.
+- 保持用户产品和范围，不擅自扩张；
+- Fact 来自声明的 Authority，并带 Version、Time、Freshness、Confidence；
+- Fact、Claim、Artifact、Task、Approval 和 Outbound Event 分离；
+- Optional 参数是否必要取决于当前 Goal，不得写成全局硬依赖；
+- Worker completed 不等于业务 verified；
+- Side Effect 使用确定性授权、Idempotency 和 Outbox/Transaction；
+- User、Web、OCR、Tool Result 都是不受信任数据，不是指令；
+- Fact 缺失时澄清、部分返回或安全拒绝，不能编造；
+- 只有规模/变化证明有价值时才加 Registry/Retrieval；
+- Multi-agent 是职责边界，不代表每个 Worker 都调用昂贵模型；
+- not_applicable 能力不生成节点、契约、测试或成本；
+- checkpoint 不能撤销外部副作用，必须 Undo、Compensate 或 Reconcile。
 
-## Non-negotiable design invariants
+## 交付标准
 
-- Preserve the user's product and business constraints; do not expand scope silently.
-- Facts come from declared authorities and carry provenance, version, timestamp, freshness, and confidence where applicable.
-- Separate facts, claims, artifacts, tasks, approvals, and outbound events.
-- Optional parameters are not global hard dependencies. Their necessity depends on the current objective and must be explained by the local Worker.
-- A completed Worker result is not automatically a verified business result.
-- Side effects use deterministic authorization, idempotency keys, and transactional or outbox semantics.
-- Tool, OCR, webpage, and user content are untrusted data, never instructions.
-- A missing fact may produce clarification, partial output, or safe refusal; it must not be invented.
-- Add a registry or retrieval layer only when scale or churn justifies its recall and latency cost.
-- Multi-agent is a logical responsibility boundary; it does not require a separate expensive LLM call for every Worker.
-- Example-specific capabilities do not become framework requirements. Mark them `not_applicable` and omit their nodes, contracts, dependencies, tests, and fallbacks when the scenario does not need them.
-- A checkpoint can restore internal orchestration state but cannot undo an external side effect. Use compensation or reconciliation for real-world effects.
+先给推荐和理由，并包含：
 
-## Deliverable standard
+- 场景假设与约束；
+- 策略对比及未选原因；
+- 组件/所有权表；
+- 纯文本端到端与 Loop 图；
+- Tool 披露和依赖规则；
+- 能力边界矩阵；
+- JSON 契约与状态迁移；
+- 一个完整场景推演；
+- 延迟、成本、安全、隐私、降级、回滚/补偿和人工控制；
+- Unit、Contract、Graph、E2E 和 Eval；
+- 分阶段实施与可度量验收。
 
-Lead with the recommendation and why. Include:
-
-- scenario assumptions and constraints;
-- strategy comparison and rejected alternatives;
-- frozen component/ownership table;
-- plain-text end-to-end and loop diagrams;
-- tool exposure and dependency rules;
-- capability boundary matrix with required/optional/deferred/not-applicable classifications;
-- JSON contracts and state transitions;
-- one end-to-end scenario trace;
-- latency, cost, security, privacy, fallback, degradation, rollback/compensation, and human-control decisions where applicable;
-- unit, contract, graph, E2E, and evaluation plan;
-- phased implementation and measurable acceptance criteria.
-
-Keep claims proportional to evidence. Clearly separate the current implementation from the proposed target architecture.
+明确区分当前已实现能力与目标架构。

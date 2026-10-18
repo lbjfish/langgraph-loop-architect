@@ -1,208 +1,137 @@
-# Technical proposal delivery template
+# AI/Agent 技术方案模板
 
-Use this structure for a complete architecture answer. Omit sections that do not affect the decision; do not fill space with generic framework descriptions.
+只保留影响决策的章节，首段先给选型结论。
 
-## 1. Executive recommendation
+## 1. 推荐
 
-State in the first paragraph:
+说明首选模式、优化的业务结果、为何匹配 Tool/Domain/Dependency/Risk、最大取舍，以及更简单备选和迁移条件。
 
-- selected pattern;
-- business outcome it optimizes;
-- why it fits the tool/domain/dependency/risk profile;
-- the most important tradeoff;
-- simpler fallback or migration trigger.
+## 2. 场景和假设
 
-Example shape:
-
-```text
-Recommend a hybrid architecture: deterministic fast paths for stable read-only intents,
-plus a Supervisor Loop with progressive domain Workers for ambiguous multi-domain goals.
-This avoids global tool-context growth and preserves runtime dependency discovery,
-while keeping p95 low for common requests. Dynamic retrieval is deferred until a
-single domain exceeds the local schema budget or tool churn makes static lists costly.
-```
-
-## 2. Scenario and assumptions
-
-| Item | Decision-relevant detail | Evidence or assumption |
+| 项目 | 决策相关内容 | 证据/假设 |
 |---|---|---|
-| Users/channels |  |  |
-| Business goal |  |  |
-| Tools and data authorities |  |  |
-| Side effects |  |  |
-| Domains |  |  |
-| Dependency shape |  |  |
-| Latency/throughput |  |  |
-| Privacy/compliance |  |  |
-| Availability/fallback |  |  |
+| User/Channel |  |  |
+| Business Goal |  |  |
+| Tool/Authority |  |  |
+| Side Effect |  |  |
+| Domain |  |  |
+| Dependency |  |  |
+| Latency/Throughput |  |  |
+| Privacy/Compliance |  |  |
+| Availability/Fallback |  |  |
 
-List unknowns whose answers could change the pattern.
+列出会改变架构的未知项。
 
-## 3. Strategy comparison
+## 3. 策略对比
 
-Compare the selected pattern with at least one credible alternative:
-
-| Pattern | Accuracy | Latency | Scale/churn | Security | Complexity | Verdict |
+| 模式 | Accuracy | Latency | Scale/Churn | Security | Complexity | 结论 |
 |---|---|---|---|---|---|---|
-| Full tool exposure |  |  |  |  |  |  |
-| Progressive domains |  |  |  |  |  |  |
+| Full Tool |  |  |  |  |  |  |
+| Progressive Domain |  |  |  |  |  |  |
 | Hybrid |  |  |  |  |  |  |
-| Dynamic retrieval |  |  |  |  |  |  |
-| Deterministic workflow |  |  |  |  |  |  |
+| Dynamic Retrieval |  |  |  |  |  |  |
+| Deterministic Workflow |  |  |  |  |  |  |
 
-Explain why the runner-up was rejected now and what would make it preferable later.
+解释第二名为什么现在不采用、什么变化会让它更适合。
 
-## 4. Frozen components and ownership
+## 4. 固定组件和职责
 
-| Component | Owns | Must not do |
+| 组件 | 负责 | 禁止 |
 |---|---|---|
 | API Gateway |  |  |
-| Input processor |  |  |
+| Input Processor |  |  |
 | Supervisor |  |  |
-| Domain entries |  |  |
-| Domain Workers |  |  |
-| Deterministic gates |  |  |
-| Global state |  |  |
-| Human approval |  |  |
+| Domain Entry |  |  |
+| Domain Worker |  |  |
+| Deterministic Gate |  |  |
+| Global State |  |  |
+| HumanTask |  |  |
 | Outbox |  |  |
 
-Remove components not used. Add a retriever only if the selection analysis justifies it.
+删除未使用组件；只有选型证明需要时才加入 Retriever。
 
-### Capability boundary matrix
+### 能力边界
 
-For every candidate capability, mark `required`, `optional`, `deferred`, or `not_applicable`, then document:
-
-| Capability | Classification | Owner | Accepts | Provides | Authority | Permissions | Side effect | SLO/cost | Fallback | Recovery | Human trigger | Tests |
+| Capability | 分类 | Owner | Accepts | Provides | Authority | Permission | Side Effect | SLO/Cost | Fallback | Recovery | Human | Test |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 |  |  |  |  |  |  |  |  |  |  |  |  |  |
 
-Do not include ASR, TTS, translation, vision, generation, 3D, payment, or notification merely because another example used it. Include only capabilities supported by the scenario's channels, inputs, outputs, and business requirements.
+ASR、TTS、Translation、Vision、Generation、3D、Payment、Notification 仅在场景要求时出现。
 
-## 5. End-to-end flow
+## 5. 端到端流程
 
-Prefer a plain-text diagram unless the user requests Mermaid:
+~~~text
+Channel → Gateway → Normalize → Supervisor Decide
+                                → Domain Execute
+                                → Review → Continue/Stop
+                                → Policy → Human → Outbox
+~~~
 
-```text
-Channel → Gateway → Normalize → Decide → Execute → Review
-                                      ↑          ↓
-                                      └── Loop ──┘
-                                                   ↓
-                                      Gate → Approve → Outbox
-```
+描述每次 Transition 的业务职责，不写框架代码。
 
-Describe the responsibilities at each transition, not framework syntax.
+## 6. Tool 披露
 
-## 6. Tool exposure and routing
+说明 Supervisor 能看到什么、Worker 能看到什么、本地 Tool 是全量还是检索、权限如何强制、Capability 如何映射 Domain、何时走确定性 Fast-path，以及为何不暴露更多/更少 Tool。
 
-Document:
+## 7. 依赖
 
-- what the Supervisor can see;
-- what each Worker can see;
-- whether local tools are fully exposed or retrieved;
-- how concrete tool permissions are enforced;
-- how capabilities map to domains;
-- when a deterministic fast path bypasses the Supervisor;
-- why the design does not expose more or fewer tools.
+至少展示：
 
-## 7. Dependency behavior
+- 一个固定硬依赖；
+- 一个随 Goal 变化的 Optional 依赖；
+- 一个 Tool 返回后才发现的依赖；
+- 并行 Wave 和独立原因；
+- Missing Capability、Clarification 和 Fallback。
 
-Show:
+## 8. JSON 契约
 
-- one fixed hard dependency;
-- one optional dependency whose necessity changes by goal;
-- one dependency discovered after a tool response;
-- parallel waves and why tasks are independent;
-- missing capability, clarification, and fallback behavior.
+至少覆盖 DomainEntry、InputEnvelope、GoalSpec、SupervisorDecision、DomainTask、DomainResult/CapabilityRequest、Fact/Artifact、Review/State、FinalResponse、Approval/HumanTask、Recovery/Compensation/Reconciliation 和 Outbox。
 
-## 8. JSON contracts
+说明 Producer、Consumer 和 Validation Invariant。
 
-At minimum include or reference:
+## 9. 场景推演
 
-- DomainEntrySet;
-- InputEnvelope;
-- GoalSpec;
-- SupervisorDecision;
-- DomainTask;
-- DomainResult/CapabilityRequest;
-- FactEnvelope and ArtifactEnvelope;
-- SupervisorReview and StateSnapshot;
-- FinalResponsePlan;
-- ApprovalRequest and OutboxEvent for side effects.
+~~~text
+1. 输入标准化
+2. Supervisor 声明 Goal/Required Outputs
+3. 派发当前 Wave
+4. Worker 返回部分结果或 CapabilityRequest
+5. Supervisor Review/Replan
+6. 补齐依赖并 Resume
+7. Completion Check
+8. Policy/Human Gate
+9. Outbox 幂等发送
+~~~
 
-For each contract, explain who produces it, who consumes it, and the validation invariant.
+另给一个失败/降级路径。
 
-## 9. Scenario trace
+## 10. 性能与模型路由
 
-Walk through one realistic request step by step:
+包含各阶段 p50/p95、哪些路径不调用 LLM、模型大小/角色、Cache/Fact Reuse、Concurrency、Token/外部成本和何时才加 Retrieval。
 
-```text
-1. Input arrives and is normalized.
-2. Supervisor declares the goal and required outputs.
-3. Current wave is dispatched.
-4. A Worker produces a partial result or capability request.
-5. Supervisor reviews state and replans.
-6. Missing capability is obtained and the original Worker resumes.
-7. Completion checks pass.
-8. Policy and human gates run.
-9. Idempotent outbound event is recorded and sent.
-```
+## 11. 安全与韧性
 
-Also show one failure or degraded path.
+覆盖 Least Privilege、Untrusted Tool Output、Tenant Isolation、Schema、Provenance、TTL、Idempotency、Approval Binding、Media Lifecycle、Retry 和 Reconciliation。
 
-## 10. Performance and model routing
+严格区分 Retry、Fallback、Degrade、Rollback、Compensate、Reconcile、Human 和 Fail Closed。每个关键能力声明最高降级等级。
 
-Include:
+## 12. 测试与指标
 
-- p50/p95 budget by stage;
-- which paths avoid an LLM;
-- model size/role by task;
-- caching and fact reuse;
-- concurrency rules;
-- token and external-service budgets;
-- conditions that justify adding retrieval.
+Unit、Contract、Graph、E2E、Failure Injection、Golden Set；高风险字段使用 Fail-closed 阈值。
 
-## 11. Security, privacy, and reliability
+## 13. 实施路线
 
-Cover least privilege, untrusted tool output, tenant isolation, schema validation, provenance, TTL, idempotency, approval binding, media lifecycle, retries, and reconciliation.
+建议：
 
-Also distinguish:
+1. Typed State + Mock Tool；
+2. 单领域 Vertical Slice；
+3. Supervisor Loop + Dynamic Dependency；
+4. Side-effect Gate + HumanTask；
+5. 场景确有需要时加入多模态/专项服务；
+6. Shadow → Read-only → Limited Automation → Expanded Rollout。
 
-- retry;
-- equivalent fallback;
-- reduced-quality or reduced-modality degradation;
-- internal state rollback;
-- external business compensation;
-- unknown-outcome reconciliation;
-- human handoff;
-- fail-closed behavior.
+每阶段包含 Acceptance 和 Rollback/Forward-fix。
 
-State the highest permitted degradation level per critical capability. Describe the complete HumanTask lifecycle only where human intervention is justified: trigger, queue, role, SLA, expiry, candidate hash, allowed decisions, revalidation, resume, escalation, and audit.
+## 14. 决策记录
 
-## 12. Testing and metrics
-
-Specify unit, contract, graph, E2E, failure-injection, and golden-set coverage. Include architecture-specific metrics and fail-closed thresholds for high-risk fields.
-
-## 13. Implementation roadmap
-
-Recommended phases:
-
-1. typed state and mocked tools;
-2. one-domain vertical slice;
-3. Supervisor Loop and dynamic dependency;
-4. side-effect gates and approval;
-5. multimodal or specialist services;
-6. shadow, read-only, limited automation, expanded rollout.
-
-Every phase needs an observable acceptance test and rollback path.
-
-Multimodal or specialist services are conditional. Omit that phase when all such capabilities are `not_applicable`.
-
-## 14. Final decision record
-
-End with:
-
-- selected architecture;
-- explicitly excluded components;
-- assumptions to validate;
-- migration triggers;
-- first implementation milestone.
+列出选定架构、明确排除项、待验证假设、迁移触发和第一个实施 Milestone。

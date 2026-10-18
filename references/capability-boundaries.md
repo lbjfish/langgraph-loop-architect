@@ -1,240 +1,210 @@
-# Capability boundaries and applicability
+# 能力边界与适用性
 
-Use this reference to decide which capabilities a business architecture actually needs and to prevent a useful example from becoming a universal requirement.
+本参考用于判断业务真正需要哪些能力，避免把某个案例中的 ASR、TTS、图像生成或 LangGraph 误当成通用必需项。
 
-## 1. Applicability comes before architecture
+## 1. 先判断适用性，再设计架构
 
-Every candidate capability must be classified:
+每项候选能力必须分类：
 
-| Classification | Meaning |
+| 分类 | 含义 |
 |---|---|
-| `required` | The stated business outcome cannot be met safely without it |
-| `optional` | Improves quality or convenience but has a valid path without it |
-| `deferred` | Valuable later but intentionally outside the current release |
-| `not_applicable` | The scenario has no input, output, policy, or operational need for it |
+| required | 没有它就无法安全完成业务目标 |
+| optional | 能改善质量或体验，但存在合法替代路径 |
+| deferred | 有价值，但明确不进入当前版本 |
+| not_applicable | 当前业务没有相关输入、输出、策略或运维需求 |
 
-Do not add a node, Worker, provider, JSON contract, fallback, test suite, or cost budget for a `not_applicable` capability.
+not_applicable 能力不得生成运行时节点、服务、Provider、契约、降级链、测试或成本。
 
-Examples:
+示例：
 
-- A text-only internal knowledge assistant normally marks ASR, TTS, image generation, and 3D rendering `not_applicable`.
-- A phone sales assistant may require ASR and TTS but mark image generation `not_applicable`.
-- A document workflow may require OCR but not conversational language detection.
-- A payment workflow may require compensation and reconciliation but no multimodal model.
+- 纯文本知识助手通常不需要 ASR、TTS、图像生成和 3D。
+- 电话销售可能需要 ASR/TTS，但不需要图像生成。
+- 文档流程可能需要 OCR，却不需要对话语言识别。
+- 支付流程可能需要补偿和对账，但不需要多模态模型。
 
-## 2. Capability categories
+## 2. 能力分类
 
-### Platform control capabilities
+### 平台控制能力
 
-Consider these for most production systems, but include only what the risk and deployment require:
+根据风险选择：
 
-- authentication and tenant isolation;
-- contract/schema validation;
-- state and checkpoint persistence;
-- policy and permission gates;
-- idempotency and side-effect control;
-- observability, audit, and cost accounting;
-- retry, fallback, degradation, reconciliation, and human handoff;
-- secret and sensitive-data handling.
+- 身份认证、授权和租户隔离；
+- Schema/契约校验；
+- 状态、历史和 checkpoint；
+- 策略与权限门禁；
+- 幂等、副作用控制和 Outbox；
+- 日志、审计、指标和成本；
+- 重试、降级、补偿、对账和人工接管；
+- 密钥与敏感数据保护。
 
-### Business-domain capabilities
+### 业务领域能力
 
-These come from the scenario, for example:
+由业务决定，例如客户、商品、订单、库存、物流、退款、审批、排班、账单、安装和售后。
 
-- product, order, customer, logistics, refund, approval, scheduling, billing, or support;
-- domain calculations and authoritative facts;
-- domain-specific write operations and compensations.
+### 专项可选能力
 
-### Specialist optional capabilities
+不得默认加入：
 
-Never add these by default:
+- ASR/STT、语言识别、TTS、语音校验；
+- 翻译和 Locale 格式化；
+- OCR、文档理解、图像/视频理解；
+- 图像/视频生成与编辑；
+- 深度、几何、3D、AR、渲染；
+- Web/Search/RAG；
+- 代码执行；
+- 通知、支付、签名、外部发布。
 
-- ASR/STT and language identification;
-- TTS and voice verification;
-- translation and locale formatting;
-- OCR and document understanding;
-- image/video understanding;
-- image/video generation or editing;
-- depth, geometry, 3D, AR, or rendering;
-- web/search/RAG retrieval;
-- code execution;
-- notification, payment, signature, or external publish.
+## 3. 能力边界矩阵
 
-## 3. Capability boundary matrix
+对 required、optional、deferred 能力逐项填写：
 
-For every `required`, `optional`, or `deferred` capability, complete this matrix:
-
-| Field | Question |
+| 字段 | 要回答的问题 |
 |---|---|
-| Capability | What typed business ability is provided? |
-| Classification | Required, optional, deferred, or not applicable? |
-| Business purpose | Which user outcome or requirement needs it? |
-| Owner | Deterministic service, Domain Worker, specialist model, human, or external system? |
-| Accepts | Which typed inputs may it consume? |
-| Provides | Which typed outputs may it produce? |
-| Authority | Is it authoritative fact, inference, simulation, draft, or human decision? |
-| Permissions | Which tenant, region, role, consent, or data scope is required? |
-| Side effect | None, reversible, compensatable, or effectively irreversible? |
-| Preconditions | Which hard gates must pass before execution? |
-| Freshness | What TTL, version, or revalidation rule applies? |
-| SLO | Latency, throughput, availability, and quality requirements? |
-| Cost | Per-call or per-run budget and quota? |
-| Failure modes | How can it fail or become uncertain? |
-| Fallback chain | Which alternative implementation or output is permitted? |
-| Recovery | Retry, resume, rollback, compensate, reconcile, hand off, or fail closed? |
-| Human trigger | When is a person required and what may they decide? |
-| Observability | Which IDs, metrics, facts, and hashes must be recorded? |
-| Acceptance | Which contract, graph, E2E, and failure-injection tests prove it? |
+| 能力 | 提供什么类型化业务能力？ |
+| 分类 | required、optional、deferred 还是 not_applicable？ |
+| 业务目的 | 对应哪个用户结果或要求？ |
+| 所有者 | 应用服务、工作流 Activity、领域服务、专项模型、人工还是外部系统？ |
+| Accepts | 可消费哪些类型化输入？ |
+| Provides | 可产出哪些类型化输出？ |
+| 权威性 | 权威事实、确定性计算、模型推断、模拟、草稿还是人工决定？ |
+| 权限 | 需要什么租户、地区、角色、授权或数据范围？ |
+| 副作用 | 无、可逆、可补偿还是近似不可逆？ |
+| 前置条件 | 执行前必须通过哪些硬门禁？ |
+| 新鲜度 | TTL、版本或重新校验规则是什么？ |
+| SLO | 延迟、吞吐、可用性和质量要求是什么？ |
+| 成本 | 单次/单流程预算和配额是什么？ |
+| 故障 | 能如何失败或产生不确定结果？ |
+| 降级链 | 允许使用哪些替代实现或输出？ |
+| 恢复 | retry、resume、rollback、compensate、reconcile、人工或 fail closed？ |
+| 人工触发 | 何时必须由人决定，可以决定什么？ |
+| 可观测性 | 记录哪些 ID、指标、事实和 hash？ |
+| 验收 | 哪些契约、集成、E2E 和故障注入能证明它？ |
 
-## 4. Generic capability profile
+## 4. 能力与实现分离
 
-The corresponding JSON contract is `CapabilityProfile` in `json-contracts.md`. It should describe a capability without binding the architecture to a specific provider.
+能力描述业务需要，实现描述技术选择：
 
-Separate capability from implementation:
+~~~text
+能力：SpeechToText
+  实现 A：云 ASR
+  实现 B：本地 ASR
+  降级：要求用户改用文字
 
-```text
-Capability: SpeechToText
-  Implementation A: cloud ASR provider
-  Implementation B: local ASR model
-  Fallback: request typed input
+能力：ProductLookup
+  实现 A：商品 API
+  实现 B：只读副本或缓存
+  降级：人工查询或 fail closed
+~~~
 
-Capability: ProductLookup
-  Implementation A: Product API
-  Implementation B: read-only replica/cache
-  Fallback: human lookup or fail closed
-```
+编排器面向能力和业务输出，运行时策略再选择允许的实现。对应 JSON 见 contracts-and-state.md 或 AI Skill 的 json-contracts.md。
 
-This lets the Supervisor reason about required outputs while deterministic runtime policy chooses a permitted provider.
+## 5. 权威性边界
 
-## 5. Authority boundary
-
-Every output must declare one of these roles or an equivalent domain-specific classification:
-
-| Role | Meaning | May directly support a high-risk claim? |
+| 类型 | 含义 | 能否直接支持高风险结论 |
 |---|---|---|
-| authoritative fact | official API, database, signed document, accountable human | yes, subject to freshness and scope |
-| deterministic result | reproducible calculation over authoritative facts | yes, with input references and formula version |
-| model inference | classification, estimate, extraction, or prediction | only within defined confidence and review policy |
-| simulation | generated visualization or what-if result | no, unless clearly disclosed as simulation |
-| draft | candidate text/code/action | no, until validated and approved as required |
-| human decision | accountable approval or exception | yes within the person's authority and candidate hash |
+| 权威事实 | 官方 API、数据库、签名文档、负责人的确认 | 可以，但必须满足范围与新鲜度 |
+| 确定性结果 | 对权威事实做可复算计算 | 可以，需保存输入和公式版本 |
+| 模型推断 | 分类、估计、抽取、预测 | 仅在置信度和审核策略允许时 |
+| 模拟 | 效果图、What-if、预测场景 | 不可冒充事实，必须披露 |
+| 草稿 | 候选文本、代码、动作 | 通过校验/审批前不可执行 |
+| 人工决定 | 有权限的人作出的可追责决定 | 在权限和候选 hash 范围内有效 |
 
-Never allow a generated artifact, translation, OCR result, or model estimate to silently replace an authoritative fact.
+生成产物、翻译、OCR 或模型估计不得静默替代权威事实。
 
-## 6. Side-effect boundary
+## 6. 副作用边界
 
-Classify each capability:
+- none：只读或计算；
+- reversible：有经过验证的真实撤销操作；
+- compensatable：不能真正撤销，但有业务补偿；
+- irreversible：发布、消息、签名、删除或其他不可可靠撤销行为。
 
-- `none`: read or compute only;
-- `reversible`: system can reliably undo using a tested operation;
-- `compensatable`: cannot truly undo, but a business compensation exists;
-- `irreversible`: publication, external message, signature, destructive action, or unknown real-world consequence.
+该分类决定授权、幂等、checkpoint、人工审批、对账和测试深度。
 
-The classification determines authorization, idempotency, checkpoint behavior, human review, reconciliation, and test depth.
+## 7. 依赖边界
 
-## 7. Dependency boundary
+- 硬依赖：策略、权限、事务或类型要求，始终成立；
+- 软依赖：改善当前结果，可在披露后省略；
+- 条件依赖：只在特定目标或风险下必需；
+- 运行时依赖：观察或执行后才能发现；
+- Provider 依赖：实现细节，不应泄漏到业务能力图。
 
-Distinguish:
+不得把软依赖和条件依赖写成无条件边。Activity、服务或 Agent 应报告当前缺少什么、为什么需要，再由所选编排器处理。
 
-- hard dependency: policy, permission, transaction, or type requirement that always applies;
-- soft dependency: improves the current goal but may be omitted with disclosure;
-- conditional dependency: required only for certain goals or risk levels;
-- runtime dependency: discovered only after an observation or tool result;
-- provider dependency: implementation detail that should not leak into the business capability graph.
+## 8. 能力运行状态
 
-Do not turn soft or conditional dependencies into unconditional LangGraph edges. Let the local Worker report why a capability is required for the current objective, then let the Supervisor resolve it.
-
-## 8. Capability availability state
-
-Use explicit states:
-
-| State | Meaning |
+| 状态 | 含义 |
 |---|---|
-| `available` | Meets current policy and SLO |
-| `degraded` | Works with reduced quality, modality, speed, or freshness and requires disclosure |
-| `unavailable` | Cannot be used now; another path may exist |
-| `blocked` | Technically available but prohibited by permission, policy, cost, or human decision |
-| `unknown` | Health or side-effect outcome is uncertain; reconcile before retry |
+| available | 满足当前策略和 SLO |
+| degraded | 质量、模态、速度或新鲜度下降，必须披露 |
+| unavailable | 当前不可用，但可能有替代路径 |
+| blocked | 技术可用，但被权限、策略、成本或人工决定阻止 |
+| unknown | 健康状态或副作用结果未知，重试前必须对账 |
 
-The system must not equate `unavailable` with `not_applicable`: one is a runtime condition, the other is an architecture decision.
+unavailable 是运行时状态；not_applicable 是架构判断，二者不可混淆。
 
-## 9. Modality-neutral design
+## 9. 模态中立
 
-The core loop should operate on typed capabilities and references rather than assuming text, voice, or images:
+核心流程应围绕类型化能力和引用，不预设文本、语音或图像：
 
-```text
-Input capability → normalized facts/artifacts → business capabilities
-                 → response plan → available output capability
-```
+~~~text
+输入能力 → 标准化事实/产物 → 业务能力
+         → 回复/动作计划 → 当前可用输出能力
+~~~
 
-Only add modality adapters needed by the scenario.
+### 纯文本
 
-### Text-only scenario
+~~~text
+TextInput → Goal → 业务领域 → VerifiedFacts → TextReply
+~~~
 
-```text
-TextInput → Intent/Goal → business domains → VerifiedFacts → TextReply
-```
+没有 ASR、TTS、Vision 或媒体生成。
 
-No ASR, TTS, vision, or media generation is present.
+### 语音与多语言（条件案例）
 
-### Voice and multilingual scenario: optional example
+仅在业务确实接受语音输入或必须返回语音时使用：
 
-Use this only if the business accepts voice input or must return voice:
-
-```text
+~~~text
 VoiceInput
-   ↓
-Language ID + ASR + confidence gate
-   ↓
-typed intent and structured facts
-   ↓
-business execution
-   ↓
-locale-aware text using locked facts
-   ↓
-TTS when voice output is requested
-   ↓
-ASR round-trip check for critical numbers, names, dates, and identifiers
-```
+  → Language ID + ASR + 置信度门禁
+  → 类型化意图与结构化事实
+  → 业务执行
+  → 基于锁定事实的本地化文本
+  → 按需 TTS
+  → 对关键数字、姓名、日期和标识做 ASR 回听校验
+~~~
 
-Example degradation:
+示例降级：
 
-- ASR low confidence: ask the user to repeat or type;
-- language unsupported: preserve original input and hand off or request text;
-- translation unavailable: avoid translating high-risk facts freely; use templates or human review;
-- TTS unavailable: return target-language text if acceptable;
-- TTS round-trip mismatch: retry within policy, then alternate permitted provider or return text/human handoff;
-- no voice requirement: omit this entire capability chain.
+- ASR 低置信度：要求重说或输入文字；
+- 不支持语言：保留原文并转人工或要求文字；
+- 翻译不可用：关键事实使用模板或人工审核；
+- TTS 不可用：允许时降级为目标语言文字；
+- TTS 回听不一致：受控重试，再切换允许的 Provider，仍失败则文字/人工；
+- 没有语音需求：整条能力链都不加入。
 
-### Image/vision scenario: optional example
+### 图像/Vision（条件案例）
 
-Add only for image input or visual output. Separate media permission, sanitation, vision inference, authoritative metadata, generation, provenance, and disclosure. A generated image is not evidence that a real product, person, or event exists.
+只有图像输入或视觉输出才加入。必须分离媒体授权与净化、Vision 推断、权威元数据、生成、来源和披露。生成图不能证明真实商品、人物或事件存在。
 
-## 10. Capability selection workflow
+## 10. 选择流程
 
-```text
-User outcome and required outputs
-        ↓
-candidate capability inventory
-        ↓
-classify required / optional / deferred / not_applicable
-        ↓
-define authority, permissions, side effects, SLO, and cost
-        ↓
-define failure, fallback, recovery, and human trigger
-        ↓
-map only applicable capabilities into domains and graph nodes
-        ↓
-derive contracts, tests, metrics, and rollout gates
-```
+~~~text
+用户结果和必需输出
+  → 候选能力清单
+  → required / optional / deferred / not_applicable
+  → 权威、权限、副作用、SLO、成本
+  → 故障、降级、恢复、人工触发
+  → 仅把适用能力映射为领域和运行节点
+  → 生成契约、测试、指标和上线门禁
+~~~
 
-## 11. Review questions
+## 11. 审查问题
 
-- Does every capability exist because of a stated requirement?
-- Could a deterministic implementation replace an unnecessary Agent?
-- Are provider names hidden behind capability contracts where appropriate?
-- Are authoritative facts separated from inference and simulation?
-- Are optional modalities omitted when irrelevant?
-- Are side effects classified and protected?
-- Is every degraded output truthful and usable?
-- Can tests prove both availability and the fallback path?
+- 每项能力是否对应真实要求？
+- 普通确定性代码能否替代不必要的引擎、服务或 Agent？
+- Provider 是否被实现层隔离？
+- 权威事实是否与推断/模拟分开？
+- 无关模态是否已删除？
+- 副作用是否分类并受保护？
+- 降级结果是否真实、可用且有披露？
+- 正常路径和降级路径是否都可测试？

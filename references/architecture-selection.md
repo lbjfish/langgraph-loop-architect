@@ -1,294 +1,173 @@
-# Architecture selection guide
+# Agent 架构选择指南
 
-Use this guide to choose the simplest tool exposure and orchestration pattern that satisfies the business constraints. Tool-count ranges are heuristics, not universal limits; model capability, schema size, description quality, and risk matter more than a single number.
+选择能满足准确率、延迟、成本、安全和运维要求的最简单模式。Tool 数量只是参考，Schema 长度、领域相似度、模型能力和风险更重要。
 
-## 1. Scenario profile
+## 1. 场景画像
 
-Capture these dimensions before recommending an architecture:
-
-| Dimension | Questions |
+| 维度 | 问题 |
 |---|---|
-| Outcome | What decision, artifact, transaction, or response must be produced? |
-| Modalities | Are inputs/outputs text, voice, image, video, documents, 3D, or none of these? |
-| Tools | How many tools exist in total and per coherent domain? |
-| Domains | Can tools be partitioned by stable business ownership and vocabulary? |
-| Churn | How often are tools added, removed, renamed, or versioned? |
-| Dependencies | Are relations fixed, optional, data-dependent, or discovered after execution? |
-| Side effects | Which operations spend money, send messages, alter data, or expose private content? |
-| Latency | What are p50/p95 budgets? Is another model or search round trip affordable? |
-| Accuracy | Is a plausible answer sufficient, or must high-risk fields be exact and sourced? |
-| Context | Can all tool schemas and relevant facts fit without crowding the model? |
-| Audit | Must decisions, facts, approvals, and retries be replayable? |
-| Availability | What happens when a model, API, media service, or database is unavailable? |
-| Recovery | Which effects can be retried, rolled back, compensated, reconciled, or handed to a human? |
-| Organization | Are domains maintained by different teams with different permissions? |
+| 目标 | 要产出决定、Artifact、Transaction 还是回复？ |
+| 模态 | Text、Voice、Image、Video、Document、3D 中哪些适用？ |
+| Tool | 总数和每领域数量？ |
+| Domain | 能否按稳定业务所有权和词汇分组？ |
+| Churn | Tool 添加、删除、改名和版本变化多快？ |
+| Dependency | 固定、可选、数据相关还是执行后发现？ |
+| Side Effect | 哪些动作花钱、发消息、改数据或接触隐私？ |
+| Latency | p50/p95 是否允许额外模型/检索往返？ |
+| Accuracy | 允许合理近似，还是关键字段必须 100% 有来源？ |
+| Context | Tool Schema 和 Fact 能否舒适放入上下文？ |
+| Audit | Decision、Fact、Approval、Retry 是否必须重放？ |
+| Availability | 模型、API、Media、DB 不可用时怎么办？ |
+| Recovery | Retry、Rollback、Compensate、Reconcile 还是 Human？ |
+| Ownership | 是否由不同领域团队和权限维护？ |
 
-## 2. Pattern overview
+## 2. 模式对比
 
-| Pattern | Best fit | Main benefit | Main cost |
+| 模式 | 适合 | 优点 | 成本 |
 |---|---|---|---|
-| 1. Full tool exposure | Small, coherent, stable tool set | Lowest routing overhead and simplest implementation | Tool confusion and context growth as scale rises |
-| 2. Progressive domain disclosure | Several stable domains with moderate local tool sets | Context and permission isolation without global search | Extra Supervisor/Worker transitions |
-| 3. Hybrid composition | Mixed simple and complex paths, enterprise risk, variable dependencies | Balances fast paths, flexibility, and hard controls | More design and testing work |
-| 4. Dynamic retrieval | Hundreds or thousands of tools, high churn, weak upfront partitioning | Scales discovery without exposing everything | Recall, ranking, latency, and observability risk |
-| 5. Deterministic workflow | Stable regulated process or irreversible actions | Predictability, testability, and compliance | Low adaptability to unmodeled goals |
-| 6. ReAct/code-agent loop | Open-ended investigation or engineering work | Strong adaptation to unknown steps | Harder latency, cost, and termination control |
+| 1. 全量 Tool 暴露 | 小、同质、稳定 Tool 集 | 最低路由开销 | 扩大后 Tool 混淆和上下文膨胀 |
+| 2. 渐进式领域披露 | 多个稳定领域，本地 Tool 适中 | 隔离上下文和权限 | 多一次 Supervisor/Worker 往返 |
+| 3. 混合模式 | 简单/复杂路径并存、企业风险 | 平衡快路径、灵活性和硬门禁 | 设计和测试更复杂 |
+| 4. 动态 Tool Retrieval | 数百/数千 Tool、高变化 | 不暴露全量目录 | Recall、Ranking、Latency、观测风险 |
+| 5. 确定性 Workflow | 稳定受监管或不可逆流程 | 可预测、可测试 | 对未知目标适应弱 |
+| 6. ReAct/Code Agent | 开放式调查/工程 | 能根据观察适应 | 延迟、成本、终止更难控制 |
 
-## 3. Pattern 1: full tool exposure
+## 3. 模式一：全量 Tool
 
-### Shape
+~~~text
+User → One Agent + All Tool Schemas → Tool Calls → Final
+~~~
 
-```text
-User → One Agent with all tool schemas → selected tool calls → final response
-```
+适合大约 5–20 个简洁、同领域、只读或外部有硬门禁的 Tool，并且多数请求只调用 1–2 次。
 
-### Prefer when
+避免用于：
 
-- roughly 5–20 concise tools share one vocabulary;
-- most requests need one or two calls;
-- dependencies are shallow;
-- tool descriptions fit comfortably in context;
-- side effects are read-only or guarded outside the model;
-- lowest latency and implementation simplicity dominate.
+- 不同领域重名/近义 Tool；
+- 数百 Schema；
+- 权限和隐私范围差异大；
+- 跨域可选依赖复杂；
+- 错误选择会触发高风险副作用。
 
-### Avoid when
+控制：清晰命名、严格 JSON Schema、读写 Tool 分离、授权/幂等/数字校验外置，并持续测 Tool Selection Accuracy。
 
-- tools from unrelated domains have overlapping names or semantics;
-- the prompt carries hundreds of schemas;
-- different domains require different credentials or privacy scopes;
-- optional cross-domain dependencies cause long, unstable plans;
-- an incorrect selection can create a high-risk side effect.
+## 4. 模式二：渐进式领域披露
 
-### Controls
+~~~text
+Supervisor 只见少量 Domain Entry
+  → 选择一个或多个 Domain
+  → Worker 只见本领域 Tool
+  → Result / needed_capabilities 返回 Supervisor
+~~~
 
-- Use clear, discriminating names and JSON schemas.
-- Separate read tools from side-effect tools.
-- Put authorization, idempotency, and numeric validation outside the model.
-- Measure tool-selection accuracy as the catalog grows.
+适合领域可稳定划分、全局目录过大但本地目录可控、权限按领域隔离、跨域依赖可选或运行时出现的场景。
 
-## 4. Pattern 2: progressive domain disclosure
+Domain Entry 是静态小型 Tool Schema，只声明 Accepts/Provides，不是运行时具体 API Registry。
 
-### Shape
+逻辑 Worker 不等于一次独立 LLM：明确操作可走确定性 Router，只有本领域歧义/多步任务才调用模型。
 
-```text
-Supervisor sees a small domain list
-        ↓
-chooses one or more domain entries
-        ↓
-Domain Worker sees only local tools
-        ↓
-result or needed_capabilities returns to Supervisor
-```
+## 5. 模式三：混合
 
-### Prefer when
-
-- tools naturally group into stable domains;
-- the global catalog is too large but each local catalog is manageable;
-- domain teams own separate data and permissions;
-- cross-domain dependencies are optional or discovered at runtime;
-- global retrieval would add unnecessary latency.
-
-### Important boundary
-
-A domain entry is a static, small tool schema exposed to the Supervisor. It states the domain's accepted input capabilities and provided output capabilities. It is not a runtime registry of concrete APIs.
-
-The Supervisor chooses a domain and goal. The Worker chooses concrete local APIs. A Worker never calls another domain directly; it returns a typed missing capability to the Supervisor.
-
-### Cost control
-
-A Domain Worker is a logical subgraph, not necessarily a separate LLM call. A local deterministic router may execute simple operations; use a domain LLM only for ambiguous or multi-step work.
-
-## 5. Pattern 3: hybrid composition
-
-This is usually the best enterprise default when the workload contains both frequent simple queries and uncertain cross-domain tasks.
-
-### Shape
-
-```text
+~~~text
 Input
-  ↓
-Deterministic fast-path classifier
-  ├─ known safe request → direct adapter/workflow
-  └─ ambiguous or multi-domain → Supervisor Loop
-                                  ↓
-                         progressive domain entries
-                                  ↓
-                   local tools or domain-local retrieval
-                                  ↓
-                         deterministic policy gates
-```
+  → Deterministic Fast-path
+      明确安全请求 → Direct Adapter/Workflow
+      歧义/多领域 → Supervisor Loop
+                      → Progressive Domain
+                      → Local Tool 或 Local Retrieval
+                      → Deterministic Gate
+~~~
 
-### Typical composition
+典型组合：
 
-- deterministic fast path for top-volume, stable intents;
-- Supervisor Loop for ambiguous, multi-domain, or recovery cases;
-- progressive disclosure between domains;
-- full exposure inside a small domain;
-- domain-local retrieval only when one domain has too many tools;
-- fixed approval/outbox workflow around irreversible actions;
-- ReAct loop only within a bounded investigative subtask.
+- 高频稳定 Intent 走确定性快路径；
+- 歧义、多域、恢复进入 Supervisor；
+- 领域间渐进披露；
+- 小领域本地全量 Tool；
+- 只有单领域 Tool 过多才做本地 Retrieval；
+- 不可逆动作使用 Approval/Outbox；
+- 开放探索只在有边界子任务内用 ReAct。
 
-### Prefer when
+主要风险是 Router 层叠。必须冻结术语、所有权和唯一 Global State。
 
-- latency requirements differ by request type;
-- simple operations should not pay multi-agent overhead;
-- complex goals require runtime dependency discovery;
-- high-risk side effects need deterministic control;
-- the organization expects the tool catalog to grow.
+## 6. 模式四：动态 Retrieval
 
-### Main risk
+~~~text
+Goal / Required Capability
+  → Permission/Tenant/Region/Version Hard Filter
+  → BM25/Embedding Top-k
+  → Rerank + LLM Selection
+  → Validate Arguments → Execute
+~~~
 
-The hybrid can become an unexplainable pile of routers. Freeze vocabulary and ownership, define one authoritative global state, and make every branch converge on the same review and policy contracts.
+仅在数百/数千 Tool、动态安装、高变化、领域划分弱且上下文无法容纳时使用。
 
-## 6. Pattern 4: dynamic tool retrieval
+必须：
 
-### Shape
+- 先做权限、租户、地区、副作用、版本硬过滤；
+- 记录 Candidate、Score、Selection 和 Rejection；
+- 提供 No-result/Recovery Query；
+- 分开评估 Recall@k 和最终 Selection；
+- 不可逆 Tool 默认不进入自动检索。
 
-```text
-Goal / required capability
-        ↓
-tool search using metadata, BM25, embeddings, or filters
-        ↓
-ranked top-k concrete tools
-        ↓
-LLM validates candidates and executes
-```
+优先在大领域内部检索，而不是全局检索。
 
-### Prefer when
+## 7. 模式五：确定性 Workflow + 有边界 Agent
 
-- there are hundreds or thousands of tools;
-- tools are installed dynamically or change frequently;
-- domain partitioning is weak or cross-cutting;
-- the model cannot receive the full catalog;
-- retrieval latency is acceptable.
+~~~text
+Fixed State Machine/DAG
+  → Agent Extraction/Draft Node
+  → Deterministic Validation
+  → Explicit Next State
+~~~
 
-### Do not add merely for sophistication
+适合顺序稳定、受监管、事务不可逆且每个 Transition 必须穷举测试的场景。硬策略依赖写死，软语义依赖不要强制成无条件边。
 
-Retrieval performs work the model could have done directly for a small catalog and creates new failure modes: missing the correct tool, ranking an unsafe tool, stale metadata, embedding drift, and extra latency.
+## 8. 模式六：ReAct/Code Agent
 
-### Required controls
+适合路径未知、需反复观察，Tool 包含 Search、Filesystem、Code Execution 或 Diagnostic 的场景。
 
-- Filter by tenant, permissions, environment, region, side-effect class, and version before semantic ranking.
-- Retrieve more candidates than the model may execute, then rerank.
-- Record candidates, scores, selected tool, and rejected reason.
-- Provide a no-result path and a recovery query.
-- Evaluate recall@k separately from final tool-selection accuracy.
-- Keep irreversible tools outside automatic retrieval unless policy permits them.
+必须具备 Goal/Completion Test、Time/Turn/Token/Cost Budget、Sandbox/Permission、Action/Result Log、重复动作检测、Checkpoint 和 Human Escalation。
 
-### Useful variant
+## 9. 决策树
 
-Use retrieval inside a single large domain while keeping the Supervisor's domain list static. This preserves global clarity and limits search scope.
+~~~text
+步骤/副作用是否依法或运营上固定？
+  是 → Deterministic Workflow + Bounded Agent Node
+  否 → Tool 是否小且同质？
+       是 → Full Exposure
+       否 → 是否可稳定分领域？
+            是 → Progressive Domain
+                 高频简单/高风险硬动作并存？是 → Hybrid
+            否 → Tool 是否巨大或动态安装？
+                 是 → Dynamic Retrieval
+                 否 → 改善领域分类或使用 Bounded ReAct
+~~~
 
-## 7. Pattern 5: deterministic workflow with bounded agent nodes
+## 10. 轻量评分
 
-### Shape
+按 0–3 评分，仅用于组织讨论：
 
-```text
-Fixed state machine / DAG
-  → agent extracts or drafts inside a node
-  → deterministic validation
-  → explicit next state
-```
+| 因素 | 低 | 高时偏向 |
+|---|---|---|
+| Tool 数 | 小 | Retrieval/Progressive |
+| Domain 可分性 | 弱 | Progressive |
+| Churn | 静态 | Retrieval |
+| Dependency 不确定性 | 固定 | Supervisor/ReAct |
+| Side Effect Risk | 只读 | Deterministic/Hybrid |
+| Latency Pressure | 宽松 | Full/Fast-path |
+| Audit | 低 | Typed State + Deterministic |
+| Openness | 脚本化 | ReAct |
 
-### Prefer when
+始终说明首选方案的成本、第二名未选原因和迁移触发条件。
 
-- the process order is known and stable;
-- regulations or transactions require deterministic gates;
-- every transition must be exhaustively tested;
-- unexpected adaptation is less valuable than predictability.
+## 11. 常见组合
 
-### Avoid overconstraining
+- 小型 SaaS：Full Read Tool + Deterministic Write Wrapper；
+- 多领域企业助手：Supervisor + Progressive Domain + Policy Gate；
+- 大型 Plugin 平台：Fast-path + Domain + Local Retrieval + Approval/Outbox；
+- 受监管审批：Deterministic Workflow + Extraction/Draft Agent + Human；
+- 工程 Agent：Bounded ReAct + Sandbox + Checkpoint + Permission。
 
-Do not encode optional business relationships as unconditional edges. Keep hard policy or transactional dependencies fixed; allow a local Agent or Supervisor to decide soft semantic dependencies.
+## 12. 决策记录
 
-## 8. Pattern 6: open-ended ReAct or code-agent loop
-
-### Prefer when
-
-- the solution path is unknown in advance;
-- the agent must inspect observations and adapt repeatedly;
-- tools include search, filesystem, code execution, or diagnostics;
-- human-style investigation is the product capability.
-
-### Required controls
-
-- explicit objective and completion test;
-- bounded time, turns, tokens, and external cost;
-- safe tool sandbox and permission checks;
-- observation/action/result logs without private reasoning;
-- loop-repeat detection and escalation;
-- checkpointing for long-running work.
-
-## 9. Selection decision tree
-
-```text
-Are the steps and side effects legally or operationally fixed?
-  ├─ yes → deterministic workflow; add bounded agent nodes only where ambiguity exists
-  └─ no
-      ↓
-Can all relevant tools fit as a small coherent set?
-  ├─ yes → full exposure, unless permissions require stronger isolation
-  └─ no
-      ↓
-Do tools partition into stable business domains?
-  ├─ yes → progressive domain disclosure
-  │         ↓
-  │       Are high-volume requests simple or high-risk actions fixed?
-  │         ├─ yes → hybrid composition
-  │         └─ no  → progressive Supervisor Loop
-  └─ no
-      ↓
-Is the catalog very large or dynamically installed?
-  ├─ yes → dynamic retrieval, ideally after hard metadata filters
-  └─ no  → improve domain taxonomy or use a bounded ReAct loop
-```
-
-## 10. Lightweight scoring
-
-Rate each factor 0–3 and use the score to structure discussion, not to replace judgment.
-
-| Factor | 0 | 3 | Favors |
-|---|---|---|---|
-| Tool catalog size | very small | huge | retrieval/progressive as size rises |
-| Domain separability | weak | strong | progressive as separability rises |
-| Tool churn | static | highly dynamic | retrieval as churn rises |
-| Dependency uncertainty | fixed | discovered at runtime | Supervisor/ReAct as uncertainty rises |
-| Side-effect risk | read-only | irreversible/high impact | deterministic/hybrid as risk rises |
-| Latency pressure | relaxed | very tight | full exposure/fast path as pressure rises |
-| Audit requirement | low | regulated | deterministic/hybrid with typed state |
-| Task openness | scripted | exploratory | ReAct as openness rises |
-
-Always report the winning pattern's costs and why the runner-up was rejected.
-
-## 11. Common combinations
-
-### Small SaaS assistant
-
-Full exposure for read tools + deterministic wrapper for writes.
-
-### Multi-domain enterprise assistant
-
-Supervisor + progressive domains + local full exposure + policy gates.
-
-### Enterprise platform with hundreds of plugins
-
-Deterministic fast paths + Supervisor + progressive domains + domain-local retrieval + approval/outbox.
-
-### Regulated approval process
-
-Deterministic workflow + bounded extraction/recommendation agents + mandatory human decision.
-
-### Engineering agent
-
-ReAct/code-agent loop + sandbox + checkpoint + permission gates; use specialized subagents only for truly independent responsibilities.
-
-## 12. Architecture decision record
-
-Every recommendation should state:
-
-- selected pattern and scope;
-- two plausible alternatives;
-- scenario evidence supporting the selection;
-- latency, accuracy, cost, security, and maintenance tradeoffs;
-- conditions that would trigger migration to another pattern;
-- what is intentionally not included.
+记录选定模式和范围、两个合理备选、场景证据、延迟/准确/成本/安全/维护取舍、迁移条件及明确不包含的组件。

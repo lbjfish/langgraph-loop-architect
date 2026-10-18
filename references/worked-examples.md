@@ -1,182 +1,107 @@
-# Worked pattern examples
+# Agent 编排模式案例
 
-These examples calibrate architecture choice. They are not templates to copy without reconsidering the user's constraints.
+案例用于校准，不可脱离实际约束复制。
 
-## Example A: small internal support assistant
+## A：小型内部助手
 
-### Scenario
+场景：8 个只读 Tool，HR/IT 词汇相近，多数请求只调用一个 Tool，无财务/外部副作用，要求低延迟。
 
-- 8 read-only tools: employee directory, policy search, holiday calendar, ticket lookup;
-- one HR/IT vocabulary;
-- most requests use one tool;
-- no external send or financial side effect;
-- sub-second response preferred.
+推荐：单 Agent 全量 Tool，Adapter 外做 Schema 和 Auth。
 
-### Recommendation
+~~~text
+User → Agent + 8 Tools → Validate → Reply
+~~~
 
-Full tool exposure to one Agent, with deterministic schema validation and authorization around each adapter.
+不选渐进领域：额外模型决策只增加延迟。Tool 增长、权限分离或领域独立后再迁移。
 
-```text
-User → single Agent with 8 tools → result validation → response
-```
+## B：多领域客服
 
-### Why not progressive domains
+场景：Account、Catalog、Order、Delivery、Refund、Language 共 45 个 Tool；有可选跨域依赖；退款写入高风险；订单/金额/地址必须精确；查订单状态需快速。
 
-Two model decisions would add latency without materially reducing confusion. Reconsider when tools exceed the prompt budget, permissions diverge, or HR/IT ownership becomes separate.
+推荐：混合。
 
-## Example B: multi-domain customer service
+~~~text
+明确 Order Status → Deterministic Fast-path
 
-### Scenario
+其他请求 → Supervisor
+  ├─ Account Domain
+  ├─ Order Domain
+  ├─ Delivery Domain
+  ├─ Refund Domain
+  └─ Language Domain
+       → Money/Write Gate → Human/Outbox
+~~~
 
-- 45 tools across account, catalog, orders, delivery, refund, and language domains;
-- optional cross-domain dependencies;
-- writes and refunds require stronger permission;
-- exact order, money, and address facts matter;
-- common order-status requests should remain fast.
+领域内 Tool 少时直接全量暴露，暂不加向量检索。
 
-### Recommendation
+动态依赖：Delivery 可以在无身份时回答通用时效；查询当前包裹则返回需要 OrderIdentity 和 AuthorizedCustomerContext，Supervisor 补齐后 Resume。
 
-Hybrid composition:
+## C：全球多模态商务（条件案例）
 
-```text
-Known order-status intent → deterministic fast path
+只有场景确实包含语音、图片或生成时才加入这些能力。
 
-Other request → Supervisor
-                 ├─ account_domain
-                 ├─ order_domain
-                 ├─ delivery_domain
-                 ├─ refund_domain
-                 └─ language_domain
-                         ↓
-                 deterministic money/write gates
-                         ↓
-                    approval/outbox
-```
+场景：Catalog、Inventory、Price、Logistics、Privacy、Asset、Vision、Generation、Language；客户文本/语音/住宅图；模拟图不能冒充商品事实；隐私媒体需授权。
 
-Inside each domain, expose a small local tool set directly. Do not add vector retrieval yet.
+推荐：Progressive Domain + Deterministic Gate + Specialist Service + Checkpoint + HumanTask。
 
-### Dynamic dependency example
+~~~text
+Gateway → Normalize Locale/Media → Supervisor
+  ├─ Fact Domain
+  ├─ Consent Domain
+  └─ Consent 后的 Vision
+       → Review → Generation
+       → Provenance/Geometry/Policy Gate
+       → Human → Outbox
+~~~
 
-A delivery Worker can answer generic delivery windows without customer identity. If the user asks for the exact current shipment, it returns `OrderIdentity` and `AuthorizedCustomerContext` as needed capabilities. The Supervisor obtains them and resumes delivery.
+SKU、尺寸、金额、日期和配送用类型化 Fact。需要语音时 ASR 负责输入/回听，TTS 负责输出；没有语音就删除两者。Simulation 必须有 Provenance 和 Disclosure。
 
-## Example C: global commerce with multimodal generation
+不选固定 DAG：有的请求只需价格，有的需媒体，可选输入只对特定 Goal 必需。
 
-This is a conditional specialist example, not the default architecture. Apply its ASR, TTS, vision, generation, consent, and media-provenance capabilities only when the scenario actually contains those modalities.
+## D：大型 Plugin 生态
 
-### Scenario
+场景：2000 个动态安装 Tool，目录每日变化，领域分类弱，租户/地区/副作用范围不同。
 
-- catalog, inventory, price, logistics, privacy, asset, vision, generation, and language domains;
-- text, voice, and customer images;
-- generated visuals must not become product facts;
-- customer media needs purpose and retention controls;
-- some requests need interactive visualization;
-- model or media service may be unavailable.
+推荐：动态 Retrieval，并尽可能先做 Domain 或硬元数据过滤。
 
-### Recommendation
-
-Supervisor Loop with progressive domains, deterministic policy gates, specialist media services, checkpointing, and human approval for private/generated external content.
-
-```text
-Gateway → normalize language/media → Supervisor
-                                      ├─ fact domains
-                                      ├─ consent domain
-                                      └─ space/vision after consent
-                                              ↓
-                                     Supervisor review
-                                              ↓
-                                      generation domain
-                                              ↓
-                            provenance + geometry + policy gates
-                                              ↓
-                                       approval → outbox
-```
-
-Use typed facts for SKU, dimensions, money, dates, and delivery. When voice is required, ASR transcribes input and may verify generated voice; TTS produces output speech. When voice is absent, omit both capabilities and use the ordinary text path. A simulation carries explicit provenance and disclosure.
-
-### Why not a fixed DAG
-
-Some requests need only price, some need media, and optional inputs become necessary only for particular goals. A fully fixed graph either overcalls services or blocks legitimate partial answers.
-
-## Example D: plugin ecosystem
-
-### Scenario
-
-- 2,000 independently installed tools;
-- catalog changes daily;
-- weak domain taxonomy;
-- tools include different tenants, regions, and side-effect classes;
-- tool discovery may take hundreds of milliseconds.
-
-### Recommendation
-
-Dynamic retrieval with hard metadata filters, reranking, and deterministic permission gates. If a stable domain taxonomy can be created, prefer domain selection before retrieval.
-
-```text
+~~~text
 Goal
-  ↓
-hard filters: tenant + permission + region + version + read/write class
-  ↓
-BM25/embedding candidate retrieval
-  ↓
-rerank and LLM selection
-  ↓
-argument validation and execution
-```
+  → Tenant/Permission/Region/Version/Read-write Filter
+  → BM25/Embedding Candidate
+  → Rerank + LLM Selection
+  → Argument Validation → Execute
+~~~
 
-### Required evaluation
+评测 Recall@k、Unsafe Filter、Stale Metadata、No-result Recovery 和总延迟。
 
-- recall@k for the correct tool;
-- unsafe-tool filter recall;
-- stale metadata rate;
-- no-result recovery;
-- retrieval plus execution latency;
-- final task success against a flat or domain baseline.
+## E：受监管审批
 
-## Example E: regulated claim approval
+场景：提交阶段固定、法律期限/签名、LLM 只抽取文档和草拟建议、人工拥有审批、Transition 必须重放。
 
-### Scenario
+推荐：确定性 Workflow + 有边界 Agent Node。
 
-- fixed submission stages;
-- legal deadlines and signatures;
-- LLM extracts documents and drafts recommendations;
-- humans own the approval;
-- every transition must be replayable.
+~~~text
+Receive → Validate → Agent Extraction → Deterministic Rule
+  → Human Decision → Signed Side Effect → Reconciliation
+~~~
 
-### Recommendation
+Agent 可以报告 Missing Document，但不能绕过必需阶段。
 
-Deterministic workflow with bounded Agent nodes, not a free-form Supervisor loop.
+## F：工程调查 Agent
 
-```text
-Receive → validate documents → Agent extraction → deterministic checks
-        → human decision → signed side effect → reconciliation
-```
+场景：步骤顺序未知，使用 Filesystem、Test、Search、Code Execution，需要反复观察，存在安全 Sandbox 和 Version Control。
 
-The Agent may return missing-document capabilities, but it cannot choose to bypass a required stage.
+推荐：Bounded ReAct/Code Agent + Checkpoint + Permission。只有真正独立工作才创建子 Agent。
 
-## Example F: engineering investigation
+## 速查
 
-### Scenario
+~~~text
+小且同质 Tool        → Full Exposure
+稳定业务领域          → Progressive Domain
+简单/复杂请求并存      → Hybrid
+巨大动态 Tool         → Retrieval
+固定受监管流程         → Deterministic Workflow
+未知探索过程           → ReAct/Code Agent
+~~~
 
-- unknown number and order of steps;
-- filesystem, tests, search, and code execution;
-- the result emerges from repeated observations;
-- safe sandbox and version control are available.
-
-### Recommendation
-
-Bounded ReAct/code-agent loop with checkpointing, permission boundaries, observable action/result logs, and specialized subagents only for independent work.
-
-Do not force every engineering task into predeclared business domains. Do enforce stop tests, budgets, secret handling, and review before external mutation.
-
-## Comparison takeaway
-
-```text
-Small coherent catalog          → full exposure
-Stable business domains         → progressive disclosure
-Mixed simple/complex workload   → hybrid
-Huge dynamic catalog            → retrieval
-Fixed regulated process         → deterministic workflow
-Unknown exploratory process     → ReAct/code-agent loop
-```
-
-The architecture can evolve. Start with the simplest fitting pattern and define measurable migration triggers rather than deploying every layer on day one.
+从满足要求的最简单模式开始，并定义可度量迁移条件，不要第一天部署全部层。

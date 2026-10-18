@@ -1,288 +1,238 @@
-# Resilience, rollback, and human control
+# 韧性、回滚与人工控制
 
-Use this reference for production designs that may encounter provider failure, partial results, stale facts, side effects, or human decisions.
+适用于存在 Provider 故障、部分结果、过期事实、副作用或人工决定的生产系统。
 
-## 1. Recovery actions are not interchangeable
+## 1. 恢复动作不能混用
 
-| Action | Meaning | Safe when |
+| 动作 | 含义 | 适用条件 |
 |---|---|---|
-| Retry | Repeat the same implementation | failure is transient, operation is idempotent, and billing/side-effect state is known |
-| Fallback | Use another provider, model, adapter, cache, or implementation for the same capability | semantic and policy equivalence is defined |
-| Degrade | Return a reduced modality, accuracy, freshness, or feature set | the reduced result remains truthful, useful, and disclosed |
-| Resume | Continue from a checkpoint with preserved verified state | state and facts are still valid |
-| Rollback | Restore internal state before an external effect | no irreversible external effect has escaped, or a real undo operation exists |
-| Compensate | Perform a business action that offsets a completed effect | an approved compensation exists and is itself auditable |
-| Reconcile | Query the external authority to determine an unknown outcome | timeout or disconnect makes success uncertain |
-| Human handoff | Pause automation and create an accountable human task | policy, ambiguity, risk, repeated failure, or exception requires judgment |
-| Fail closed | Refuse the operation or high-risk claim | no safe path can satisfy required guarantees |
+| Retry | 重复同一实现 | 故障短暂、操作幂等、计费和副作用状态已知 |
+| Fallback | 切换同一能力的 Provider、模型、适配器、缓存或实现 | 语义与策略等价已定义 |
+| Degrade | 降低质量、模态、新鲜度或功能 | 结果仍真实可用并明确披露 |
+| Resume | 使用已保存状态继续 | checkpoint 和事实仍有效 |
+| Rollback | 恢复内部状态或调用真实撤销操作 | 外部副作用尚未发生，或确有可验证 Undo |
+| Compensate | 用新业务动作抵消已完成副作用 | 已定义并授权补偿 |
+| Reconcile | 查询外部权威系统确认未知结果 | 超时/断连导致是否成功不确定 |
+| Human handoff | 暂停自动化并创建人工任务 | 策略、歧义、风险、重复失败或例外需要判断 |
+| Fail closed | 拒绝动作或高风险结论 | 没有安全路径满足保证 |
 
-Do not label every error “retryable,” every checkpoint “rollback,” or every fallback “equivalent.”
+不得把所有错误都标成 retryable，也不得把 checkpoint 当成业务回滚。
 
-## 2. Failure taxonomy
+## 2. 故障分类
 
-Classify before choosing an action:
-
-| Failure class | Examples | Default direction |
+| 类型 | 示例 | 默认方向 |
 |---|---|---|
-| validation | malformed JSON, missing required field, schema version mismatch | one constrained repair, then fail/block |
-| ambiguity | multiple entities, conflicting user intent | clarify or human handoff |
-| dependency | missing capability, blocked prerequisite | Supervisor resolves, degrades, or asks |
-| transient infrastructure | timeout before execution, connection failure, 5xx | bounded retry if idempotent and outcome known |
-| rate/capacity | 429, quota exhaustion, queue saturation | backoff, alternate capacity, degrade, or handoff |
-| provider/model | unsupported feature, provider outage, quality gate failure | permitted fallback or degrade |
-| stale/conflicting fact | expired price, mismatched authorities | refresh, resolve authority, or block |
-| policy/permission | missing consent, forbidden region, insufficient role | block or human exception process; never model override |
-| partial completion | some facts or artifacts succeeded before later failure | preserve verified outputs and replan remaining work |
-| side-effect uncertainty | timeout after send/payment/write request | reconcile before any retry |
-| security | prompt injection, tenant escape, malicious tool output | isolate, block, alert, and preserve evidence |
-| human timeout/rejection | approval expired, reviewer rejected, SLA breached | escalate, revise, cancel, or safe fallback |
+| 校验 | JSON/Schema 错误、缺少必填字段 | 一次受限修复，再失败/阻断 |
+| 歧义 | 多个实体、意图冲突 | 澄清或人工 |
+| 依赖 | 缺能力、前置被阻断 | 编排器补齐、降级或询问 |
+| 瞬时基础设施 | 明确未执行前的超时、断连、5xx | 满足幂等和结果已知时受控重试 |
+| 限流/容量 | 429、配额、队列拥堵 | 退避、替代容量、降级或人工 |
+| Provider/实现 | 功能不支持、Provider 故障、质量门禁失败 | 允许的 fallback 或 degrade |
+| 事实过期/冲突 | 价格过期、权威源不一致 | 刷新、按权威解决或阻断 |
+| 策略/权限 | 无授权、地区禁止、角色不足 | 阻断或人工例外，模型不得覆盖 |
+| 部分完成 | 后续失败前已有有效事实/产物 | 保留有效输出并重规划剩余工作 |
+| 副作用未知 | 发送/支付/写入请求后超时 | 任何重试前先对账 |
+| 安全 | Prompt Injection、跨租户、恶意工具结果 | 隔离、阻断、告警、保留证据 |
+| 人工失败 | 审批过期、拒绝、SLA 超时 | 升级、修改、取消或安全降级 |
 
-## 3. Degradation levels
+## 3. 降级等级
 
-Use named service levels so “degraded” has operational meaning:
-
-| Level | Meaning | Example |
+| 等级 | 含义 | 示例 |
 |---|---|---|
-| D0 normal | preferred capabilities and providers available | full verified response |
-| D1 equivalent fallback | alternate implementation with equivalent contract | secondary read replica or provider |
-| D2 reduced quality | lower confidence, freshness, speed, or fidelity with disclosure | cached fact within allowed age |
-| D3 reduced modality/function | remove nonessential media or automation | text instead of voice; read-only instead of write |
-| D4 human/manual | automation pauses; human completes or decides | manual verification or approval |
-| D5 fail closed | no safe usable path | refuse high-risk action or unsupported claim |
+| D0 | 首选能力和 Provider 正常 | 完整已验证结果 |
+| D1 | 等价替代 | 只读副本或等价 Provider |
+| D2 | 质量/速度/新鲜度下降 | 策略允许范围内的缓存 |
+| D3 | 模态或功能减少 | 语音转文字、写入转只读 |
+| D4 | 人工/手工 | 人工验证、审批或执行 |
+| D5 | Fail closed | 拒绝高风险动作或不受支持结论 |
 
-The architecture should state the highest allowed degradation per capability. A low-risk convenience may reach D3; payment authorization may go directly from D0/D1 to D4/D5.
+每项能力必须定义最高允许降级等级。便利功能可以到 D3；支付授权可能从 D0/D1 直接进入 D4/D5。
 
-## 4. Generic fallback chain
+## 4. 通用降级链
 
-Do not hard-code providers into the Supervisor's business reasoning. Runtime policy may evaluate:
+~~~text
+首选实现失败
+  → 是否允许安全重试？
+      是：受控重试
+      否：是否有等价实现？
+            是：fallback 并重新校验契约
+            否：是否允许真实、可披露的降级？
+                  是：degrade
+                  否：是否有人工路径？
+                        是：HumanTask
+                        否：fail closed
+~~~
 
-```text
-preferred implementation
-        ↓ failure classified
-same implementation retry allowed?
-  ├─ yes → bounded retry
-  └─ no
-        ↓
-equivalent permitted implementation available?
-  ├─ yes → fallback and revalidate output contract
-  └─ no
-        ↓
-reduced truthful output allowed?
-  ├─ yes → degrade with disclosure
-  └─ no
-        ↓
-human/manual path available?
-  ├─ yes → create HumanTask
-  └─ no  → fail closed
-```
+Fallback 必须满足同一业务契约，或明确标明保证降低。
 
-Fallback output must pass the same business contract or explicitly identify its reduced guarantee.
+## 5. 部分完成与事实保留
 
-## 5. Partial completion and fact retention
+~~~text
+执行器产出 A、B
+  → 执行 C 时失败或发现依赖 D
+  → 结果保留 A/B，同时报告 D
+  → 编排器分别验证 A/B
+  → 已验证 A/B 进入状态，C 保持 unresolved
+  → retry / fallback / 补 D / degrade / human
+~~~
 
-A Worker may produce verified facts before discovering another dependency or failing later. Do not discard valid work.
+规则：
 
-```text
-Worker produces A and B
-        ↓
-tool for C fails or reveals missing D
-        ↓
-DomainResult preserves candidate A/B and requests D
-        ↓
-Supervisor validates A/B separately
-        ↓
-verified A/B enter state; C remains unresolved
-        ↓
-Supervisor retries, falls back, dispatches D, degrades, or hands off
-```
+- 只有验证通过的输出才能进入 verified state；
+- 失败尝试保留审计记录，不覆盖旧的有效事实；
+- 新事实通过 supersede/invalidate 取代旧事实，不删除历史；
+- Resume 复用已验证引用和 cursor/checkpoint，避免重复成本；
+- required 输出未解决前不得判定完成。
 
-Rules:
+## 6. 回滚边界
 
-- only validated outputs become verified state;
-- failed attempts remain auditable but do not overwrite prior verified facts;
-- new facts supersede old facts with explicit references; do not erase history;
-- resume uses verified references and a cursor/checkpoint, avoiding duplicate work;
-- completion remains false while required outputs are unresolved.
+### 内部状态
 
-## 6. Rollback boundary
+checkpoint 可以恢复规划、工作流或生成前的内部状态，并使之后的候选任务/产物失效，但不能假装外部世界已经撤销。
 
-### Internal orchestration rollback
+### 事实修正
 
-A checkpoint may restore graph state before a planning or generation step. It may invalidate candidate tasks/artifacts created after that checkpoint. It must not pretend external effects were undone.
+追加 invalidation 或 supersession，未来结论指向新事实；不得改写历史记录。
 
-### Fact correction
+### 产物
 
-Do not delete or rewrite historical facts. Append an invalidation or supersession record and point future claims to the current fact.
+可以撤下发布、替换候选、使签名 URL 过期或按保留策略删除对象，同时保留必要 hash 和删除回执。
 
-### Artifact rollback
+### 外部副作用
 
-Revoke publication, replace a candidate, expire a signed URL, or delete an object according to retention policy. Preserve required audit hashes and deletion receipts.
+- 有真实 Undo API 且获得授权：执行并验证；
+- 没有真实撤销：创建退款、纠正消息、取消申请或人工修复等补偿；
+- 结果未知：先对账；
+- 禁止通过恢复旧 checkpoint 假装撤销消息、支付、订单、签名或写入。
 
-### External side effects
+## 7. 补偿
 
-After a message, payment, order, signature, or external write:
+补偿计划至少定义：
 
-- if an actual undo API exists and is authorized, execute and verify it;
-- otherwise create a compensation such as refund, correction message, cancellation request, or manual remediation;
-- if outcome is unknown, reconcile first;
-- never replay an earlier checkpoint to “undo” the outside world.
+- 原始事件和 payload hash；
+- 当前外部状态；
+- 补偿原因；
+- 允许的补偿动作；
+- 权限和人工审批；
+- 幂等键；
+- 预期结果和时限；
+- 对账方式；
+- 残余风险和客户沟通。
 
-## 7. Compensation
+补偿是新的副作用，必须接受与原动作相同的门禁和审计。
 
-A compensation plan should define:
+## 8. 对账
 
-- original event and immutable payload hash;
-- observed external status;
-- reason compensation is required;
-- approved compensating action;
-- permissions and human approval;
-- idempotency key;
-- expected result and deadline;
-- reconciliation method;
-- residual risk and customer communication.
+~~~text
+请求发出 → 超时/断连 → 结果 unknown
+  → 标记 reconciling，禁止重复重试
+  → 按幂等键或外部 reference 查询
+      succeeded：记录回执并继续
+      failed/not found：策略允许后再重试
+      still unknown：延迟复查或人工升级
+~~~
 
-Compensation is a new side effect and receives the same policy, audit, and retry controls as the original action.
+外部系统是其副作用的权威来源；对账不交给模型猜测。
 
-## 8. Reconciliation
+## 9. 人工介入类型
 
-Use reconciliation after an unknown outcome:
-
-```text
-request sent → timeout/disconnect → outcome unknown
-        ↓
-mark operation reconciling; block duplicate retry
-        ↓
-query external system by idempotency/reference ID
-        ├─ succeeded → record receipt and continue
-        ├─ failed/not found → retry only if policy allows
-        └─ still unknown → human escalation or delayed reconciliation
-```
-
-Keep reconciliation separate from model reasoning. The external system is the authority for its side effects.
-
-## 9. Human intervention types
-
-| Type | Human responsibility |
+| 类型 | 人工职责 |
 |---|---|
-| review | inspect a candidate and provide feedback without authorizing a side effect |
-| approval | authorize an exact candidate/hash within scope and time |
-| clarification | supply missing business facts or resolve ambiguity |
-| exception | approve a policy exception within delegated authority |
-| manual execution | perform an operation unavailable or unsafe for automation |
-| incident takeover | stop automation and own recovery/communication |
-| dual control | two independent approvers authorize a high-risk action |
+| review | 检查候选并反馈，不授权副作用 |
+| approval | 在时间和范围内批准精确候选/hash |
+| clarification | 补充事实或解决歧义 |
+| exception | 在授权范围内批准策略例外 |
+| manual execution | 执行自动化不支持或不安全的操作 |
+| incident takeover | 停止自动化并接管恢复/沟通 |
+| dual control | 两名独立审批人批准高风险动作 |
 
-Do not require a human for every routine low-risk request. Define triggers from business risk.
+低风险常规请求不应被无意义地强制人审。
 
-## 10. Human task lifecycle
+## 10. HumanTask 生命周期
 
-```text
-Trigger detected
-    ↓
-create HumanTask bound to run, facts, artifacts, policy result, and candidate hash
-    ↓
-pause graph at checkpoint and place task in queue
-    ↓
-reviewer claims task under role/tenant scope
-    ↓
-approve / reject / request revision / provide data / escalate / cancel
-    ↓
-verify task not expired and candidate hash unchanged
-    ↓
-refresh volatile facts and permissions
-    ↓
-resume same run or create an auditable compensation/recovery run
-    ↓
-record reviewer, action, reason, timestamp, and resulting event
-```
+~~~text
+触发风险
+  → 创建绑定 run、事实、产物、策略结果和候选 hash 的 HumanTask
+  → 在 checkpoint 暂停并进入队列
+  → 符合角色/租户范围的人领取
+  → approve / reject / revise / provide data / escalate / cancel
+  → 校验任务未过期、候选未变化
+  → 刷新易变事实和权限
+  → 恢复同一流程，或创建可审计补偿/恢复流程
+  → 记录人员、动作、理由、时间和后续事件
+~~~
 
-Define:
+必须定义角色、职责分离、队列、优先级、SLA、过期、升级、转派、允许动作、是否一次性、是否双人审批，以及超时/拒绝行为。
 
-- eligible reviewer roles and separation of duties;
-- queue, priority, SLA, expiry, escalation, and reassignment;
-- which facts and artifacts the reviewer must see;
-- allowed actions and required reason;
-- whether approval is single-use;
-- whether dual control is required;
-- what happens on timeout or rejection;
-- revalidation required before resume.
+## 11. 常见人工触发
 
-## 11. Human triggers
+- 财务、法律、安全、隐私、公开发布或近似不可逆动作；
+- 置信度低于业务阈值；
+- 权威来源冲突；
+- required 能力缺失且无允许降级；
+- 策略例外；
+- Provider 或编排器重复失败；
+- 成本超限；
+- 生成内容代表真实客户、产品或事件；
+- 疑似安全事件；
+- 补偿和事故沟通。
 
-Common triggers include:
+## 12. Provider、模型与实现切换
 
-- irreversible, financial, legal, safety, privacy, or public action;
-- confidence below a business threshold;
-- unresolved conflict between authorities;
-- missing required capability with no permitted degradation;
-- policy exception;
-- repeated provider or Supervisor failure;
-- cost above threshold;
-- generated artifact representing a real customer, product, or event;
-- suspected security incident;
-- compensation or incident communication.
+切换前检查：
 
-## 12. Provider and model fallback boundary
+- 数据驻留和隐私授权；
+- 功能和 Schema 兼容性；
+- 关键字段质量；
+- 价格和配额；
+- 首次尝试是否可能已经计费；
+- 副作用是否可能已经发生；
+- 来源披露和审计字段；
+- 旧结果可否复用。
 
-Before switching provider or model, check:
+只有故障类型、计费和副作用状态明确安全时才自动切换，否则先对账或转人工。
 
-- data residency and privacy permission;
-- feature and schema compatibility;
-- model quality for critical fields;
-- pricing and quota;
-- whether the first attempt may already be billed;
-- whether a side effect may already have occurred;
-- provenance disclosure and audit fields;
-- whether the output must be regenerated or can be reused.
+## 13. 条件模态降级
 
-Automatic fallback is appropriate only when the failure class and billing/side-effect state are known safe. Otherwise reconcile or hand off.
+只在相关能力存在时使用：
 
-## 13. Modality-specific degradation is conditional
-
-These examples apply only when the capability exists:
-
-| Capability | Example fallback/degradation |
+| 能力 | 示例降级 |
 |---|---|
-| ASR | alternate permitted ASR → ask repeat → request text → human transcript |
-| TTS | alternate approved voice/provider → target-language text → human recording if policy permits |
-| translation | deterministic template for locked facts → original language → human translator |
-| vision/OCR | alternate model → request clearer input → manual extraction |
-| image generation | alternate provider → approved static asset → text-only explanation |
-| 3D/AR | simplified geometry → 2D annotated image → measurements/text |
-| retrieval/search | replica/cache within freshness policy → narrower query → human lookup |
+| ASR | 备用 ASR → 重说 → 文字 → 人工转写 |
+| TTS | 备用音色/Provider → 目标语言文字 → 策略允许的人工录音 |
+| 翻译 | 锁定事实模板 → 原文 → 人工翻译 |
+| Vision/OCR | 备用模型 → 更清晰输入 → 人工抽取 |
+| 图像生成 | 备用 Provider → 已批准静态素材 → 文字说明 |
+| 3D/AR | 简化几何 → 2D 标注图 → 尺寸/文字 |
+| Search/RAG | 策略允许的副本/缓存 → 缩小查询 → 人工查找 |
 
-If the business has no voice, image, or 3D requirement, omit the corresponding row, service, and tests.
+没有语音、图像或 3D 需求，就删除对应能力、服务和测试。
 
-## 14. Recovery decision flow
+## 14. 恢复决策
 
-```text
-Failure or risk event
-      ↓
-classify failure and side-effect state
-      ↓
-preserve verified facts and block unsafe duplicates
-      ↓
-choose exactly one primary action:
-retry / fallback / degrade / resume / rollback / compensate / reconcile / human / fail closed
-      ↓
-validate action preconditions and budget
-      ↓
-execute through deterministic runtime
-      ↓
-Supervisor reviews new state and completion
-```
+~~~text
+故障/风险
+  → 分类故障和副作用状态
+  → 保留已验证事实并阻止重复副作用
+  → 选择一个主要动作：
+    retry / fallback / degrade / resume / rollback
+    / compensate / reconcile / human / fail closed
+  → 校验前置条件和预算
+  → 由确定性运行时执行
+  → 编排器审查新状态和完成度
+~~~
 
-## 15. Required tests
+## 15. 必测项
 
-- retry occurs only for declared safe error classes;
-- provider fallback preserves or explicitly reduces the contract;
-- degradation includes the required disclosure;
-- partial facts survive later failure and are not duplicated on resume;
-- checkpoint recovery does not repeat model charges or external effects;
-- internal rollback cannot claim to undo an external event;
-- unknown side effects enter reconciliation before retry;
-- compensation is authorized, idempotent, and reconciled;
-- HumanTask binds to an immutable candidate hash and expires correctly;
-- modified facts/artifacts invalidate prior approval;
-- rejection, timeout, escalation, dual control, and resume paths work;
-- D5 fail-closed behavior produces no unsupported claim or side effect.
+- 只有声明安全的错误才会重试；
+- fallback 保持契约或明确降低保证；
+- degrade 包含必要披露；
+- 部分事实在后续失败后仍保留且 Resume 不重复；
+- checkpoint 恢复不会重复成本或副作用；
+- 内部回滚不能宣称外部事件已撤销；
+- unknown 副作用必须先对账；
+- 补偿经过授权、幂等并完成对账；
+- HumanTask 绑定候选 hash 并正确过期；
+- 事实/产物变化会使旧审批失效；
+- 拒绝、超时、升级、双人审批和恢复路径可用；
+- D5 不产生不受支持结论或副作用。

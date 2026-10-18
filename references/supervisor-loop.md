@@ -1,318 +1,250 @@
-# Supervisor Loop and progressive domain design
+# Supervisor Loop 与渐进式领域编排
 
-Use this reference after the selection guide recommends a Supervisor, progressive disclosure, or hybrid architecture.
+在策略选择确认需要 Supervisor、渐进式领域披露或混合架构后使用。这里以 LangGraph 风格的 Supervisor/Worker 为主，同时保持对其他 Agent 框架和自研 Typed State 的可迁移性。
 
-## 1. Frozen runtime vocabulary
+传统 CRUD、固定 BPMN、普通数据流水线和单次模型调用不应套用该模式。
 
-Define the components before the flow so the design does not later invent an unexplained registry or router.
+## 1. 固定术语与职责
 
-| Component | Owns | Must not own |
+| 组件 | 负责 | 不负责 |
 |---|---|---|
-| Channel adapter | IM, Web, voice, webhook protocol conversion | business planning |
-| API Gateway | authentication, tenant isolation, quotas, request size, idempotency envelope | intent or tool selection |
-| Input processor | ASR, language ID, media sanitation, normalization | business conclusions |
-| Supervisor Agent | global goal, domain choice, wave scheduling, result review, replanning, stop decision | concrete business API calls |
-| Domain entry | compact static description of one domain's inputs and outputs | concrete API inventory |
-| Domain Worker | local planning and local tool calls | cross-domain calls or final send |
-| Tool Contract | local API semantics, schemas, limits, examples, errors | global orchestration policy |
-| Global state/checkpointer | facts, tasks, artifacts, decisions, budgets, unresolved needs, recovery points | secrets or unnecessary binaries |
-| Deterministic gates | permissions, arithmetic, TTL, provenance, policy, side-effect authorization | open-ended planning |
-| Human approval | accountable decision for defined high-risk cases | routine low-risk routing |
-| Outbox/sender | transactional, idempotent delivery | content generation or mutation |
+| Channel Adapter | IM/Web/Voice/Webhook 协议 | 业务规划 |
+| API Gateway | Auth、Tenant、Quota、Size、Idempotency Envelope | Intent/Tool 选择 |
+| Input Processor | ASR、Language ID、媒体净化、标准化 | 业务结论 |
+| Supervisor | Goal、Domain 选择、Wave、Review、Replan、Stop | 直接调用具体业务 API |
+| Domain Entry | 领域级 Accepts/Provides 描述 | 具体 API 清单 |
+| Domain Worker | 本领域规划和 Tool Call | 跨领域调用和最终发送 |
+| Tool Contract | 本地 API 语义、Schema、限制、错误、示例 | 全局编排策略 |
+| Global State | Fact、Task、Artifact、Decision、Budget、Checkpoint | 密钥或大二进制 |
+| Deterministic Gate | Permission、Amount、TTL、Provenance、Side Effect | 开放式规划 |
+| HumanTask | 高风险可追责判断 | 常规低风险路由 |
+| Outbox/Sender | 事务化、幂等发送 | 内容生成 |
 
-Optional components such as a critic, retriever, planner, or policy agent must have a demonstrated purpose. Do not duplicate Supervisor responsibilities under a new name.
+Critic、Retriever、Planner 等可选组件必须证明必要，不能与 Supervisor 重复职责。
 
-## 2. Domain entry versus concrete tool
+## 2. Domain Entry 与具体 Tool
 
-A domain entry is a high-level tool or subgraph exposed to the Supervisor:
+Supervisor 只看到：
 
-```text
+~~~text
 catalog_domain
   accepts: ProductMention, SKU, Locale
   provides: ProductProfile, ProductDimensions, VariantAvailability
-```
+~~~
 
-Concrete tools remain local:
+Catalog Worker 才看到：
 
-```text
-Catalog Worker sees:
-  catalog.search_product
-  catalog.get_product
-  catalog.get_dimensions
-  catalog.get_variants
-```
+~~~text
+catalog.search_product
+catalog.get_product
+catalog.get_dimensions
+catalog.get_variants
+~~~
 
-The Supervisor says “produce ProductDimensions for this product.” It does not say “call catalog.get_dimensions” unless the chosen architecture deliberately uses full exposure.
+Supervisor 下达“为该商品产出 ProductDimensions”，不直接指定某个 API。
 
-## 3. Canonical loop
+## 3. 核心 Loop
 
-```text
+~~~text
 InputEnvelope
-      ↓
-Normalize and identify language/modality
-      ↓
-Supervisor Decide
-  ├─ finalize using verified state
-  ├─ clarify with the user
-  ├─ safe fallback or human handoff
-  └─ dispatch/resume domain tasks
-                ↓
-        Domain Worker executes local tools
-                ↓
-        DomainResult or CapabilityRequest
-                ↓
-        schema and deterministic validation
-                ↓
-        Supervisor Review
-          ├─ reject/conflict → replan
-          ├─ missing capability → dispatch another domain
-          ├─ incomplete goal → continue loop
-          └─ goal satisfied → final policy gates
-                                      ↓
-                         approval if required → outbox
-```
+  → Normalize
+  → Supervisor Decide
+      ├─ Finalize
+      ├─ Clarify
+      ├─ Safe Fallback / Human
+      └─ Dispatch/Resume Domain
+             → Worker 调用本地 Tool
+             → DomainResult / CapabilityRequest
+             → Schema + Deterministic Validation
+             → Supervisor Review
+                  ├─ Conflict/Reject → Replan
+                  ├─ Missing → Dispatch Domain
+                  ├─ Incomplete → Continue
+                  └─ Complete → Policy Gate → Human/Outbox
+~~~
 
-LangGraph supplies state, nodes, conditional edges, subgraphs, checkpointing, interrupts, and resumability. It does not decide whether the business goal is complete; that decision belongs to the Supervisor plus deterministic acceptance criteria.
+LangGraph 提供 State、Node、Conditional Edge、Subgraph、Checkpoint、Interrupt 和 Resume；业务是否完成由 Supervisor 与确定性验收条件判断。
 
-## 4. Supervisor responsibilities
+## 4. Supervisor 职责
 
-The Supervisor should:
+1. 把消息转成 Goal 和 Required Outputs；
+2. 优先复用仍有效的 verified state；
+3. 从小规模静态 Domain Entry 中选择领域；
+4. 只派发当前有依据的任务；
+5. 只有真正独立的任务才同波次；
+6. 按 Expected Output 和 Evidence 验证结果；
+7. 用 Authority、Freshness、Policy 或 Clarification 处理冲突；
+8. 新结果暴露依赖时重规划；
+9. 决定 Continue、Clarify、Degrade、Human 或 Finalize；
+10. 用已验证 Fact/Artifact 组成 ResponsePlan。
 
-1. Convert the message into an explicit goal and required outputs.
-2. Reuse verified state before scheduling new work.
-3. Select domains from a small static domain-entry list.
-4. Dispatch only currently justified tasks.
-5. Put genuinely independent tasks in the same execution wave.
-6. Validate every Worker result against the expected output and evidence.
-7. Resolve conflicts by authority, freshness, policy, or clarification.
-8. Replan when results reveal new needs.
-9. Decide whether to continue, clarify, degrade, request approval, or finalize.
-10. Compose the response plan from verified facts and artifacts.
+不得编造 Tool 中不存在的数据、为了保险调用所有 Tool、提前写死所有跨域 API 顺序、直接执行不可逆副作用、把 completed 当 verified 或保存私有 Chain-of-thought。
 
-It should not:
+## 5. Worker 契约
 
-- invent values absent from tools;
-- call every tool “just in case”;
-- write concrete cross-domain API order before evidence requires it;
-- directly perform an irreversible side effect;
-- treat `completed` as equivalent to `verified`;
-- persist private chain-of-thought.
+输入：
 
-## 5. Domain Worker responsibilities
+- 一个领域和一个明确 Objective；
+- 最小必要 State Reference；
+- Expected Outputs；
+- Constraint、Policy、Budget、Deadline；
+- 本地 Tool Contract 与 Credentials。
 
-A Worker receives:
+输出：
 
-- a single domain;
-- a concrete objective, not a vague persona;
-- references to the minimum state needed;
-- expected output capabilities;
-- constraints, policy, budget, and deadline;
-- its local Tool Contracts and credentials.
+- Produced Capabilities；
+- Evidence/Provenance；
+- Warning/Confidence；
+- 当前目标缺少的 Capability；
+- Safe Error；
+- Cost/Latency。
 
-It returns:
+Worker 可以在本领域调用多个 Tool，也可有本地 Loop；不得静默进入其他领域。后续失败前产生的有效部分结果必须显式返回，由 Supervisor 分别校验和保留。
 
-- produced typed capabilities;
-- evidence and provenance references;
-- concise warnings and confidence;
-- missing capabilities required for the current objective;
-- safe error information;
-- local cost and latency.
+## 6. 动态跨域依赖
 
-A Worker may choose several tools in its own domain. It may perform a local loop. It may not silently reach into another domain.
+依赖可能在 Supervisor 首次规划、Worker 阅读 Tool Contract、Tool 返回部分结果/错误，或 Supervisor Review 时出现。
 
-If a Worker produces valid partial outputs before becoming blocked or failing, return them explicitly. The Supervisor validates each output independently, preserves verified facts, and keeps the remaining required outputs unresolved.
+统一路径：
 
-## 6. Dynamic cross-domain dependency
+~~~text
+Worker 发现缺 Capability
+  → 返回 CapabilityRequest（reason + required_for）
+  → Supervisor 检查 Global State
+      已有且有效：Resume Worker
+      没有：选择 provides 该能力的 Domain
+            → DomainTask → Validate/Store
+            → Resume 原 Worker 或 Replan
+~~~
 
-Dependencies may be discovered:
+跨域协调必须回到 Supervisor，避免嵌套 Agent 树和隐藏循环。
 
-1. by the Supervisor before dispatch;
-2. by a Worker while interpreting a local Tool Contract;
-3. only after a tool returns partial data or an error;
-4. during Supervisor review when an expected output is not justified.
+## 7. 可选依赖
 
-Use one path for every case:
+Tool Contract 描述参数语义，而不是写死全局边：
 
-```text
-Worker detects missing capability
-        ↓
-returns CapabilityRequest with reason and required_for
-        ↓
-Supervisor checks Global State
-        ↓
-capability already present and valid?
-  ├─ yes → resume Worker with reference
-  └─ no  → select a domain whose declared provides includes the capability
-              ↓
-           dispatch DomainTask
-              ↓
-           validate and store result
-              ↓
-           resume original Worker or replan
-```
-
-This is star-shaped orchestration: all cross-domain coordination returns through the Supervisor. It avoids nested agent trees, hidden dependencies, and circular ownership.
-
-## 7. Optional dependency semantics
-
-Do not turn every optional parameter into a hard global edge. The local Tool Contract should explain the value of the parameter:
-
-```text
+~~~text
 assess_fit
   required: room_geometry
   optional: product_dimensions
-  semantic note:
-    product_dimensions is necessary when the objective is an exact fit assessment;
-    without it the tool may produce only general style guidance.
-```
+  semantic:
+    精确适配需要 product_dimensions；
+    没有时只能提供泛化风格建议。
+~~~
 
-The Worker applies the current objective:
+- “推荐风格”可以不需要尺寸；
+- “是否放得下”必须有权威尺寸；
+- “快速概念图”可用近似 Footprint，但需披露；
+- “批准安装”缺精确测量必须 fail closed。
 
-- “Suggest a style” may proceed without dimensions.
-- “Will this product fit?” requires authoritative dimensions.
-- “Create a quick concept” may use an approximate footprint with disclosure.
-- “Approve an installation” must fail closed without exact measurements.
+硬策略依赖仍由确定性门禁强制。
 
-The contract supplies semantics and examples; the Worker decides whether the input is necessary now. Hard policy dependencies remain deterministic.
+## 8. 并行波次
 
-## 8. Parallel waves
+只有彼此不需要对方输出且都已获执行授权的任务才能同波次：
 
-Two tasks may share a wave only if neither needs the other's output and both are authorized to run.
+~~~text
+Wave 1：独立 Fact/Permission
+  ├─ Product Fact
+  ├─ Customer Consent
+  └─ Regional Policy
 
-```text
-Wave 1: independent fact or permission lookups
-  ├─ product facts
-  ├─ customer authorization
-  └─ regional policy
+Supervisor Review
+  ↓
+Wave 2：由 Wave 1 解锁
+  ├─ Consent 后的 Media/Space
+  └─ Product Resolve 后的 Offer
 
-Supervisor review
-        ↓
-Wave 2: work unlocked by Wave 1
-  ├─ space analysis after consent
-  └─ offer computation after product resolution
+Supervisor Review
+  ↓
+Wave 3：Media / Localization / Transaction
+~~~
 
-Supervisor review
-        ↓
-Wave 3: media, localization, or transaction based on verified facts
-```
+授权前不得读取敏感媒体；商品和素材未确认前不得渲染；同一幂等键的副作用不能并行 Retry。
 
-Do not parallelize:
+## 9. Agent 数量与成本
 
-- work that reads media before authorization;
-- rendering before product identity and source assets are verified;
-- payment or send retries sharing the same idempotency key;
-- translation of high-risk numbers before the fact snapshot is locked.
+~~~text
+简单请求：Supervisor + 一个确定性 Domain Adapter
+本领域歧义：Supervisor + 一个 Domain LLM
+多领域：Supervisor + 分波次 Worker
+高风险：再加 Deterministic Gate + HumanTask
+~~~
 
-## 9. Agent count and execution cost
+Worker 是逻辑边界，不等于每次都调用独立大模型。领域子图可分层：
 
-Agent count is determined dynamically by the request, not fixed at startup.
+1. 明确场景用确定性路由；
+2. 抽取/分类用小型结构化模型；
+3. 只有多步歧义才用更强模型。
 
-```text
-Simple request: Supervisor + one deterministic domain adapter
-Ambiguous local request: Supervisor + one domain LLM
-Multi-domain request: Supervisor + several independent Workers in waves
-High-risk request: above + deterministic gates + human approval
-```
+## 10. 状态
 
-Logical Worker does not mean separate model process. Implement each domain as a subgraph with tiers:
+分开保存：
 
-1. deterministic routing for obvious calls;
-2. small structured model for extraction or local choice;
-3. stronger model only for ambiguous multi-step domain work.
+- Input Reference；
+- Goal/Required Output；
+- Verified Fact 与 Freshness；
+- 待审核 Candidate；
+- Task/Attempt；
+- Artifact/Media Lineage；
+- Missing Capability/Conflict；
+- Supervisor Decision/Reason；
+- Approval；
+- Outbound Event/Receipt；
+- Cost/Latency/Retry/Loop Budget。
 
-## 10. State design
+大文件进入 Object Storage，State 只存稳定引用和 Hash。
 
-Separate these collections:
+## 11. 完成与 Loop 保护
 
-- immutable input references;
-- current goal and required outputs;
-- verified facts with provenance and freshness;
-- candidate facts awaiting review;
-- tasks and attempts;
-- artifacts and media lineage;
-- missing capabilities and conflicts;
-- Supervisor decisions and concise reasons;
-- approvals;
-- outbound events and delivery receipts;
-- cost, latency, retry, and loop budgets.
+完成要求：
 
-Large files belong in object storage. State holds stable references and hashes.
+- Required Outputs 齐全；
+- 高风险 Claim 有有效 Fact Reference；
+- Conflict/Missing 已解决或披露；
+- 输出模态可用或安全降级；
+- Policy Gate 通过；
+- Required Approval 有效；
+- Outbound Event 带幂等键。
 
-## 11. Completion and loop protection
+保护：最大 Cycle、Token/Cost、Wall Clock、重复 Decision/Tool、按错误类型限制 Retry、检查过期 Fact，并对重复缺能力升级。
 
-Completion requires all of the following:
+预算耗尽不是成功，只能返回已验证部分、提出聚焦问题或转人工。
 
-- required outputs exist;
-- each high-risk claim is backed by a valid fact reference;
-- conflicts and missing capabilities are resolved or explicitly disclosed;
-- the response modality is available or safely degraded;
-- policy gates pass;
-- required approval is present;
-- outbound event is prepared with an idempotency key.
+## 12. 故障默认路由
 
-Protect the loop with:
+| 故障 | 处理 |
+|---|---|
+| Invalid JSON | 拒绝，一次受限修复 |
+| Tool 4xx | 安全时修参数，否则 blocked |
+| Timeout/5xx | 仅在幂等且计费/副作用已知时重试 |
+| Stale Fact | 刷新所属领域 |
+| Conflict | 按 Authority/Freshness 或人工/澄清 |
+| Missing Capability | 补领域、澄清或降级 |
+| Policy Failure | 硬阻断，模型不能覆盖 |
+| Send Unknown | 对账，禁止盲目重发 |
 
-- maximum Supervisor cycles;
-- per-run and per-task token/cost budgets;
-- wall-clock deadline;
-- repeated-decision and repeated-tool detection;
-- maximum retries by error class;
-- stale-state or expired-fact checks;
-- escalation after repeated unresolved capability requests.
-
-Budget exhaustion is not success. Return a partial verified result, ask a focused question, or hand off.
-
-## 12. Failures and retries
-
-This table gives default routing only. Use `resilience-human-control.md` to distinguish retry, fallback, degradation, resume, internal rollback, business compensation, reconciliation, human handoff, and fail-closed behavior.
-
-| Failure | Owner | Default behavior |
-|---|---|---|
-| invalid JSON | contract validator | reject result and allow one constrained repair |
-| local tool 4xx | Worker | correct arguments if safe; otherwise return blocked |
-| timeout/5xx | Worker/runtime | bounded retry only if idempotent and billing state known |
-| stale fact | Supervisor | refresh owning domain before final response |
-| conflicting facts | Supervisor | resolve by authority/freshness or ask user/human |
-| missing capability | Supervisor | select provider domain, clarify, or degrade |
-| policy failure | deterministic gate | block; do not let the LLM override |
-| send uncertainty | outbox/reconciliation | query delivery state; do not blindly resend |
+完整动作区分见 resilience-human-control.md。
 
 ## 13. Human-in-the-loop
 
-Use human approval for defined risk, not as a decorative final click. Common triggers:
+常见触发：财务/法律不可逆动作、真实客户/产品生成内容、隐私媒体、低置信 Entity、权威冲突、策略例外和高成本。
 
-- irreversible financial or legal action;
-- generated content representing a real product or customer;
-- private media or sensitive data;
-- low-confidence entity resolution;
-- conflicting authorities;
-- policy exception;
-- high cost above threshold.
+审批台应展示 Candidate、Fact、Source、Diff、Warning、Policy、Cost 和 Artifact Hash。Resume 前使用同一 checkpoint，重新校验 TTL、权限和候选 Hash。
 
-The approval view should include the candidate, facts, sources, differences, warnings, policy result, cost, and immutable artifact hash. Resume from the same checkpoint and revalidate freshness before execution.
+checkpoint 只能恢复内部状态，外部消息、支付、签名、发布或写入必须 Undo、Compensate 或 Reconcile。
 
-A checkpoint restores internal orchestration state; it does not undo an external message, payment, signature, publication, or write. External effects require a verified undo operation, compensation, or reconciliation.
+## 14. API Gateway 边界
 
-## 14. API Gateway boundary
+Gateway 可负责 Auth、Tenant、Region、Quota、Rate/Size、Content-Type、Malware Hook、Correlation、Idempotency Envelope、Channel Signature 和路由到 Agent Runtime。
 
-The gateway may enforce:
+Gateway 不通过 LLM 选择业务 Tool。
 
-- authentication and authorization envelope;
-- tenant, region, and quota;
-- rate and size limits;
-- content-type checks and malware scan hooks;
-- request correlation and idempotency keys;
-- channel signature verification;
-- routing to the agent runtime.
+## 15. 不适用场景
 
-It does not use an LLM to choose business tools. Business routing belongs inside the selected graph pattern.
-
-## 15. When not to use this topology
-
-Prefer a simpler design when:
-
-- a single Agent can reliably handle a small coherent tool set;
-- the process is fully deterministic;
-- there is no cross-domain state;
-- latency cannot tolerate the loop;
-- the required result is a one-shot transformation with no tools or side effects.
+- 小工具集单 Agent 已可靠；
+- 流程完全确定；
+- 没有跨域状态；
+- 延迟无法承受 Loop；
+- 只是单次转换且无 Tool/副作用；
+- 普通 CRUD、固定审批或数据流水线已有更合适机制。

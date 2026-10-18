@@ -1,4 +1,4 @@
 interface:
   display_name: "LangGraph Loop 架构师"
   short_description: "为业务场景选择工具路由并设计可恢复的 Supervisor Loop"
-  default_prompt: "Use $langgraph-loop-architect to turn this business scenario into an executable agent architecture and JSON state contracts."
+  default_prompt: "使用 $langgraph-loop-architect 将这个业务场景转成可执行的 Agent 架构与 JSON 状态契约。"

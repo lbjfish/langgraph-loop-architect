@@ -1,77 +1,71 @@
-# JSON contracts and state transitions
+# JSON 契约与状态流转
 
-Use typed JSON between nodes so routing, persistence, replay, tests, and audit do not depend on parsing free-form prose. The examples are transport contracts, not private reasoning traces.
+节点间使用类型化 JSON，使路由、持久化、重放、测试和审计不依赖解析散文。JSON 只记录可观察状态，不记录私有推理。
 
-## 1. Contract rules
+## 1. 通用规则
 
-Every durable object should include:
+- 包含 schema_version；
+- 使用稳定 ID 和 Run/Conversation Correlation；
+- Status/Action 使用明确 Enum；
+- 大 Payload 使用 Reference；
+- UTC 时间；
+- Fact 包含 Provenance/Freshness；
+- Decision 只保存简洁可观察理由；
+- 需要完整性的内容保存 Hash。
 
-- `schema_version`;
-- stable ID and parent/run correlation;
-- explicit status or action enum;
-- references to facts and artifacts instead of copied large payloads;
-- timestamps in UTC;
-- provenance and freshness for facts;
-- concise observable reason, never chain-of-thought;
-- immutable content hash where integrity matters.
+分离：
 
-Use canonical capability names such as `CustomerIdentity`, `ProductDimensions`, `RiskAssessment`, or `LocalizedReply`. A capability describes a typed business result, not a concrete tool.
+~~~text
+Fact      权威来源或确定性计算的事实
+Claim     有 Fact 支撑的用户可见陈述
+Artifact  检索或生成的文件/媒体
+Task      工作及执行状态
+Decision  可观察编排选择
+Approval  可追责授权
+Event     计划或完成的外部副作用
+~~~
 
-Keep these object types separate:
+## 2. Supervisor 可见 Domain Entry
 
-```text
-Fact       = externally sourced or deterministically computed truth
-Claim      = user-facing statement backed by one or more facts
-Artifact   = generated or retrieved file/media/output
-Task       = requested work and its execution status
-Decision   = observable orchestration choice
-Approval   = accountable authorization
-Event      = intended or completed side effect
-```
+这是部署时的小型静态配置，不是具体 Tool Registry。
 
-## 2. Supervisor-visible domain entries
-
-This is a small static deployment configuration, not a runtime registry of concrete tools.
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "domain_entries": [
     {
       "domain": "catalog",
-      "description": "Resolve products and return authoritative specifications",
+      "description": "解析商品并返回权威规格",
       "accepts": ["ProductMention", "SKU", "Locale"],
       "provides": ["ProductIdentity", "ProductProfile", "ProductDimensions"]
     },
     {
       "domain": "customer",
-      "description": "Read permitted customer context and preferences",
+      "description": "读取权限允许的客户上下文",
       "accepts": ["CustomerRef", "ConsentScope"],
       "provides": ["CustomerContext", "ConsentDecision"]
     },
     {
       "domain": "recommendation",
-      "description": "Evaluate fit and produce evidence-backed recommendations",
+      "description": "基于证据评估适配并产出建议",
       "accepts": ["Goal", "CustomerContext", "OptionalProductProfile"],
       "provides": ["Recommendation", "FitAssessment"]
     }
   ]
 }
-```
+~~~
 
-`accepts` lists input capability types the domain can understand; it does not mean every item is required. Required and optional semantics belong to local Tool Contracts and the current task objective. `provides` lists output capability types the domain can produce.
+accepts 表示领域可理解的输入类型，不代表全部必填；provides 表示可产出的能力类型。
 
-### 2.1 Capability profile
+## 3. CapabilityProfile 与 ResiliencePolicy
 
-Create profiles only for capabilities classified `required`, `optional`, or `deferred`. A `not_applicable` profile may be retained in an architecture inventory but must not create runtime nodes or dependencies.
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "capability_id": "capability:product_lookup",
   "name": "ProductLookup",
   "classification": "required",
-  "business_purpose": "Resolve a product mention to an authoritative product identity",
+  "business_purpose": "把商品名称解析为权威商品身份",
   "owner": "catalog_domain",
   "implementation_kind": "external_service",
   "accepts": ["ProductMention", "SKU"],
@@ -79,72 +73,33 @@ Create profiles only for capabilities classified `required`, `optional`, or `def
   "authority": "authoritative_fact",
   "permissions": ["tenant_catalog_read"],
   "side_effect_class": "none",
-  "freshness_policy": "catalog_versioned",
-  "slo": {
-    "p95_latency_ms": 800,
-    "availability_target": 0.999
-  },
-  "budget": {
-    "max_cost_usd": 0.01
-  },
+  "slo": {"p95_latency_ms": 800, "availability_target": 0.999},
   "failure_modes": ["ambiguous_entity", "timeout", "provider_unavailable"],
-  "resilience_policy_ref": "resilience:product_lookup_v1",
-  "human_policy_ref": "human:catalog_exception_v1",
-  "acceptance_refs": ["test:product_lookup_contract", "eval:ambiguous_product"]
+  "resilience_policy_ref": "resilience:product_lookup_v1"
 }
-```
+~~~
 
-Recommended classification enum:
-
-- `required`
-- `optional`
-- `deferred`
-- `not_applicable`
-
-Recommended side-effect enum:
-
-- `none`
-- `reversible`
-- `compensatable`
-- `irreversible`
-
-### 2.2 Resilience policy
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "policy_id": "resilience:product_lookup_v1",
   "capability_ref": "capability:product_lookup",
   "allowed_degradation_level": "D4",
   "rules": [
-    {
-      "failure_class": "timeout_before_execution",
-      "action": "retry",
-      "max_attempts": 1,
-      "backoff_ms": 200
-    },
-    {
-      "failure_class": "provider_unavailable",
-      "action": "fallback",
-      "target": "read_only_catalog_replica"
-    },
-    {
-      "failure_class": "ambiguous_entity",
-      "action": "clarify_user"
-    },
-    {
-      "failure_class": "all_implementations_unavailable",
-      "action": "human_handoff"
-    }
+    {"failure_class": "timeout_before_execution", "action": "retry", "max_attempts": 1},
+    {"failure_class": "provider_unavailable", "action": "fallback", "target": "read_only_catalog_replica"},
+    {"failure_class": "ambiguous_entity", "action": "clarify_user"},
+    {"failure_class": "all_unavailable", "action": "human_handoff"}
   ],
-  "fail_closed_conditions": ["no_authoritative_identity"],
-  "required_disclosures": []
+  "fail_closed_conditions": ["no_authoritative_identity"]
 }
-```
+~~~
 
-## 3. Input envelope
+分类：required、optional、deferred、not_applicable。副作用：none、reversible、compensatable、irreversible。
 
-```json
+## 4. InputEnvelope
+
+~~~json
 {
   "schema_version": "1.0",
   "run_id": "run_01",
@@ -162,44 +117,39 @@ Recommended side-effect enum:
     "original_text": "这款设备适合我的办公室吗？",
     "normalized_text": "这款设备适合我的办公室吗？",
     "attachments": [
-      {
-        "artifact_ref": "upload_office_01",
-        "media_type": "image/jpeg"
-      }
+      {"artifact_ref": "upload_office_01", "media_type": "image/jpeg"}
     ]
   },
   "context_refs": ["prior:product_mention_01"]
 }
-```
+~~~
 
-## 4. Goal specification
+## 5. GoalSpec
 
-The Supervisor should externalize the goal before choosing tools.
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "goal_id": "goal_01",
   "run_id": "run_01",
-  "objective": "Evaluate whether the referenced product suits the customer's office",
+  "objective": "判断指定商品是否适合客户办公室",
   "required_outputs": ["ProductIdentity", "FitAssessment", "LocalizedReply"],
   "optional_outputs": ["VisualizationArtifact"],
   "constraints": [
-    "Use authoritative product facts",
-    "Do not process private media without permitted purpose",
-    "Disclose uncertain measurements"
+    "商品事实必须来自权威来源",
+    "没有授权不得处理隐私媒体",
+    "不确定测量必须披露"
   ],
   "completion_checks": [
-    "Every high-risk claim has fact references",
-    "No unresolved critical conflict",
-    "Required policy gates pass"
+    "高风险 Claim 都有 Fact Reference",
+    "不存在未解决关键冲突",
+    "必需 Policy Gate 通过"
   ]
 }
-```
+~~~
 
-## 5. Supervisor decision
+## 6. SupervisorDecision
 
-```json
+~~~json
 {
   "schema_version": "1.0",
   "decision_id": "decision_01",
@@ -209,67 +159,47 @@ The Supervisor should externalize the goal before choosing tools.
   "missing_capabilities": ["ProductIdentity", "ConsentDecision"],
   "action": "dispatch_domains",
   "dispatch": [
-    {
-      "domain": "catalog",
-      "objective": "Resolve the product mention and return ProductIdentity",
-      "wave": 1
-    },
-    {
-      "domain": "customer",
-      "objective": "Check whether the office image may be used for this assessment",
-      "wave": 1
-    }
+    {"domain": "catalog", "objective": "解析商品身份", "wave": 1},
+    {"domain": "customer", "objective": "检查图片用途授权", "wave": 1}
   ],
   "deferred": [
     {
       "domain": "recommendation",
-      "objective": "Produce FitAssessment",
+      "objective": "产出 FitAssessment",
       "wait_for": ["ProductProfile", "ConsentDecision"]
     }
   ],
-  "reason": "Product identity and media permission must be verified before assessment",
+  "reason": "适配评估前必须确认商品和媒体权限",
   "stop": false
 }
-```
+~~~
 
-Recommended `action` enum:
+action：dispatch_domains、resume_domain、clarify_user、safe_fallback、request_human_review、finalize、fail。
 
-- `dispatch_domains`
-- `resume_domain`
-- `clarify_user`
-- `safe_fallback`
-- `request_human_review`
-- `finalize`
-- `fail`
+## 7. DomainTask
 
-## 6. Domain task
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "task_id": "task_catalog_01",
   "run_id": "run_01",
   "domain": "catalog",
-  "objective": "Resolve the referenced product and return authoritative identity and dimensions",
+  "objective": "返回权威商品身份和尺寸",
   "input_refs": ["prior:product_mention_01"],
   "expected_outputs": ["ProductIdentity", "ProductDimensions"],
   "constraints": [
-    "Use only catalog-domain tools",
-    "Return ambiguity rather than guessing",
-    "Include source version and timestamp"
+    "只使用 Catalog Tool",
+    "存在歧义时不得猜测",
+    "返回 Source Version 和时间"
   ],
-  "budget": {
-    "deadline_ms": 3000,
-    "max_attempts": 2,
-    "max_cost_usd": 0.02
-  },
+  "budget": {"deadline_ms": 3000, "max_attempts": 2, "max_cost_usd": 0.02},
   "idempotency_key": "run_01:task_catalog_01:v1"
 }
-```
+~~~
 
-## 7. Completed domain result
+## 8. DomainResult 与 CapabilityRequest
 
-```json
+~~~json
 {
   "schema_version": "1.0",
   "task_id": "task_catalog_01",
@@ -277,42 +207,18 @@ Recommended `action` enum:
   "domain": "catalog",
   "status": "completed",
   "produced_capabilities": [
-    {
-      "type": "ProductIdentity",
-      "ref": "fact:product_identity_01",
-      "confidence": 1.0
-    },
-    {
-      "type": "ProductDimensions",
-      "ref": "fact:product_dimensions_01",
-      "confidence": 1.0
-    }
+    {"type": "ProductIdentity", "ref": "fact:product_identity_01", "confidence": 1.0},
+    {"type": "ProductDimensions", "ref": "fact:product_dimensions_01", "confidence": 1.0}
   ],
   "needed_capabilities": [],
   "evidence_refs": ["source:catalog_product_v9"],
   "warnings": [],
-  "metrics": {
-    "latency_ms": 180,
-    "cost_usd": 0.0,
-    "attempts": 1
-  },
+  "metrics": {"latency_ms": 180, "cost_usd": 0.0, "attempts": 1},
   "error": null
 }
-```
+~~~
 
-Recommended result statuses:
-
-- `completed`: local objective returned, not yet Supervisor-verified;
-- `needs_capability`: current objective needs another typed capability;
-- `blocked`: user, policy, or external state is required;
-- `failed`: bounded attempts exhausted;
-- `cancelled`: Supervisor no longer needs the task.
-
-## 8. Capability request
-
-Use this result when a Worker discovers a cross-domain need. It is not a tool call.
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "task_id": "task_recommendation_01",
@@ -325,147 +231,103 @@ Use this result when a Worker discovers a cross-domain need. It is not a tool ca
       "type": "ProductDimensions",
       "required_for": "FitAssessment",
       "required_now": true,
-      "reason": "The user asked for physical fit rather than general style guidance",
+      "reason": "用户要求判断物理适配，而不是泛化风格建议",
       "acceptable_fallback": "ApproximateAssessmentWithDisclosure"
     }
   ],
-  "evidence_refs": [],
-  "warnings": [],
-  "metrics": {
-    "latency_ms": 45,
-    "cost_usd": 0.001,
-    "attempts": 1
-  },
   "error": null
 }
-```
+~~~
 
-## 9. Fact envelope
+状态：completed、needs_capability、blocked、failed、cancelled。completed 尚未等于 verified。
 
-```json
+## 9. FactEnvelope 与 ArtifactEnvelope
+
+~~~json
 {
   "schema_version": "1.0",
   "fact_id": "fact:product_dimensions_01",
   "fact_type": "ProductDimensions",
   "source_system": "product_catalog",
-  "source_ref": "catalog_product_v9",
   "source_version": "v9",
   "fetched_at": "2026-10-18T08:00:01Z",
   "expires_at": null,
-  "payload": {
-    "width_cm": 120,
-    "depth_cm": 60,
-    "height_cm": 75
-  },
+  "payload": {"width_cm": 120, "depth_cm": 60, "height_cm": 75},
   "confidence": 1.0,
   "authority": "official",
   "content_hash": "sha256:example"
 }
-```
+~~~
 
-For volatile facts such as price, inventory, delivery, permissions, or account state, `expires_at` must be non-null or the system must define another freshness rule.
-
-## 10. Artifact envelope
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "artifact_id": "artifact:visualization_01",
   "artifact_type": "VisualizationArtifact",
   "media_type": "image/png",
   "object_ref": "object://tenant_acme/run_01/visualization_01",
-  "created_at": "2026-10-18T08:00:05Z",
   "created_by": "media_domain",
-  "input_refs": [
-    "upload_office_01",
-    "fact:product_dimensions_01"
-  ],
-  "model": {
-    "provider": "configured_provider",
-    "model_id": "configured_model",
-    "parameters_ref": "generation_params_01"
-  },
+  "input_refs": ["upload_office_01", "fact:product_dimensions_01"],
   "provenance": "simulation",
-  "required_disclosures": ["This is a simulation, not an exact measurement"],
+  "required_disclosures": ["这是模拟效果，不是精确测量"],
   "content_hash": "sha256:example",
   "retention_until": "2026-10-19T08:00:05Z"
 }
-```
+~~~
 
-## 11. Supervisor review
+## 10. SupervisorReview 与 State
 
-```json
+~~~json
 {
   "schema_version": "1.0",
   "review_id": "review_02",
   "run_id": "run_01",
-  "goal_ref": "goal_01",
   "accepted_results": ["task_catalog_01", "task_customer_01"],
-  "rejected_results": [],
   "satisfied_outputs": ["ProductIdentity", "ProductDimensions", "ConsentDecision"],
   "missing_outputs": ["FitAssessment", "LocalizedReply"],
   "conflicts": [],
   "next_action": "resume_domain",
   "next_tasks": [
-    {
-      "domain": "recommendation",
-      "objective": "Produce FitAssessment using verified facts"
-    }
+    {"domain": "recommendation", "objective": "使用已验证事实完成 FitAssessment"}
   ],
   "should_finalize": false,
-  "reason": "Inputs are verified but the user-facing assessment is not complete"
+  "reason": "核心输入齐备，但用户目标尚未完成"
 }
-```
+~~~
 
-## 12. Global state snapshot
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "run_id": "run_01",
-  "conversation_id": "conversation_42",
   "status": "running",
   "goal_ref": "goal_01",
-  "input_refs": ["input:run_01"],
   "fact_refs": [
     "fact:product_identity_01",
     "fact:product_dimensions_01",
     "fact:consent_decision_01"
   ],
-  "artifact_refs": [],
   "tasks": [
-    {
-      "task_id": "task_catalog_01",
-      "domain": "catalog",
-      "status": "verified"
-    },
-    {
-      "task_id": "task_recommendation_01",
-      "domain": "recommendation",
-      "status": "pending"
-    }
+    {"task_id": "task_catalog_01", "domain": "catalog", "status": "verified"},
+    {"task_id": "task_recommendation_01", "domain": "recommendation", "status": "pending"}
   ],
   "unresolved_capabilities": ["FitAssessment", "LocalizedReply"],
-  "conflicts": [],
   "decision_refs": ["decision_01", "review_02"],
   "approval_refs": [],
   "recovery_refs": [],
   "human_task_refs": [],
-  "reconciliation_refs": [],
   "budget": {
     "supervisor_cycles": 2,
     "elapsed_ms": 900,
     "cost_usd": 0.004,
     "remaining_cost_usd": 0.196
   },
-  "checkpoint_id": "checkpoint_03",
-  "updated_at": "2026-10-18T08:00:02Z"
+  "checkpoint_id": "checkpoint_03"
 }
-```
+~~~
 
-## 13. Final response plan
+## 11. FinalResponse、Approval 与 Outbox
 
-```json
+~~~json
 {
   "schema_version": "1.0",
   "response_plan_id": "response_plan_01",
@@ -479,114 +341,50 @@ For volatile facts such as price, inventory, delivery, permissions, or account s
       "fact_refs": ["fact:product_dimensions_01"]
     }
   ],
-  "required_disclosures": ["空间效果为模拟结果，请在实施前复测"],
+  "required_disclosures": ["空间效果为模拟结果，实施前请复测"],
   "artifact_refs": ["artifact:visualization_01"],
-  "unresolved_items": [],
   "human_review_required": true,
   "send_policy": "after_approval"
 }
-```
+~~~
 
-## 14. Approval request
-
-```json
+~~~json
 {
   "schema_version": "1.0",
-  "approval_id": "approval_01",
+  "human_task_id": "human_task_01",
   "run_id": "run_01",
+  "task_type": "approval",
   "risk_level": "high",
-  "reasons": ["private customer image", "generated visualization", "external send"],
+  "queue": "tenant_acme_high_risk",
+  "eligible_roles": ["senior_operator"],
+  "required_approvals": 1,
   "candidate_ref": "response_plan_01",
-  "fact_refs": ["fact:product_dimensions_01", "fact:consent_decision_01"],
-  "artifact_refs": ["artifact:visualization_01"],
-  "allowed_actions": ["approve", "reject", "request_revision"],
   "candidate_hash": "sha256:example",
-  "expires_at": "2026-10-18T08:15:00Z"
+  "allowed_actions": ["approve", "reject", "request_revision", "escalate"],
+  "status": "pending",
+  "expires_at": "2026-10-18T08:16:00Z"
 }
-```
+~~~
 
-## 15. Outbox event
-
-Prepare a side effect only after required validation and approval.
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "event_id": "outbox_01",
   "run_id": "run_01",
   "event_type": "send_message",
-  "destination": {
-    "channel": "web_chat",
-    "recipient_ref": "customer_17"
-  },
+  "destination": {"channel": "web_chat", "recipient_ref": "customer_17"},
   "payload_ref": "response_plan_01",
   "payload_hash": "sha256:example",
   "idempotency_key": "conversation_42:response_plan_01:v1",
-  "authorization_refs": ["approval_01"],
+  "authorization_refs": ["human_task_01"],
   "status": "pending",
-  "created_at": "2026-10-18T08:01:00Z",
-  "attempts": 0,
-  "last_error": null
+  "attempts": 0
 }
-```
+~~~
 
-## 16. State transition map
+## 12. Recovery、Reconciliation 与 Compensation
 
-```text
-InputEnvelope
-    ↓ normalize and validate
-GoalSpec
-    ↓ decide
-SupervisorDecision
-    ↓ dispatch each current-wave task
-DomainTask
-    ↓ local execution
-DomainResult ──needs_capability──→ CapabilityRequest
-    ↓                                   ↓
-schema validation                   SupervisorDecision
-    ↓                                   ↓
-FactEnvelope / ArtifactEnvelope ← new domain result
-    ↓
-SupervisorReview
-    ├─ continue → SupervisorDecision
-    ├─ clarify → new InputEnvelope
-    ├─ fallback → FinalResponsePlan with unresolved disclosure
-    ├─ human → ApprovalRequest
-    └─ finalize → FinalResponsePlan
-                       ↓
-               deterministic gates
-                       ↓
-                  OutboxEvent
-
-Any node failure or uncertain side effect
-    ↓
-RecoveryDecision
-    ├─ retry / fallback / degrade / resume
-    ├─ rollback internal state
-    ├─ reconcile external outcome
-    ├─ compensate completed effect
-    ├─ create HumanTask
-    └─ fail closed
-```
-
-## 17. Validation invariants
-
-- IDs are unique within their type and immutable.
-- Every reference resolves inside the tenant and authorization boundary.
-- A Worker may only produce capability types declared by its domain entry.
-- `completed` results cannot directly create an Outbox event.
-- High-risk claims require valid fact references.
-- Expired facts cannot satisfy current completion checks.
-- Artifacts preserve input references, model/provider identity, parameters reference, provenance, and hash.
-- `reason` is a concise observable justification, not hidden reasoning.
-- Unknown values remain `null`, absent, or unresolved; never use placeholder facts in a final claim.
-- A resumed task receives new capability references instead of duplicating prior results.
-- Side effects use immutable payload hashes and idempotency keys.
-- Approval is bound to the exact candidate hash and expires when facts or artifacts change.
-
-## 18. Recovery decision
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "recovery_id": "recovery_01",
@@ -599,96 +397,70 @@ RecoveryDecision
   "action": "fallback",
   "target": "read_only_catalog_replica",
   "preserve_refs": ["fact:consent_decision_01"],
-  "invalidate_refs": [],
   "resume_from_checkpoint": "checkpoint_03",
   "requires_human": false,
-  "reason": "The primary provider is unavailable and the replica satisfies the same read-only contract",
-  "created_at": "2026-10-18T08:00:03Z"
+  "reason": "只读副本满足同一契约"
 }
-```
+~~~
 
-Recommended recovery actions:
-
-- `retry`
-- `fallback`
-- `degrade`
-- `resume`
-- `rollback_internal`
-- `compensate`
-- `reconcile`
-- `human_handoff`
-- `fail_closed`
-
-## 19. Human task
-
-`ApprovalRequest` covers approval of a prepared candidate. `HumanTask` is broader and may request clarification, exception handling, manual execution, incident takeover, compensation, or dual control.
-
-```json
-{
-  "schema_version": "1.0",
-  "human_task_id": "human_task_01",
-  "run_id": "run_01",
-  "task_type": "approval",
-  "risk_level": "high",
-  "queue": "tenant_acme_high_risk",
-  "priority": "urgent",
-  "eligible_roles": ["senior_operator"],
-  "required_approvals": 1,
-  "candidate_ref": "response_plan_01",
-  "candidate_hash": "sha256:example",
-  "fact_refs": ["fact:product_dimensions_01"],
-  "artifact_refs": ["artifact:visualization_01"],
-  "policy_refs": ["policy:private_media_send_v2"],
-  "allowed_actions": ["approve", "reject", "request_revision", "escalate", "cancel"],
-  "status": "pending",
-  "created_at": "2026-10-18T08:01:00Z",
-  "due_at": "2026-10-18T08:11:00Z",
-  "expires_at": "2026-10-18T08:16:00Z",
-  "escalation_queue": "tenant_acme_incident"
-}
-```
-
-## 20. Reconciliation record
-
-Use when an external outcome is unknown. Do not retry the original side effect until reconciliation policy allows it.
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "reconciliation_id": "reconciliation_01",
   "run_id": "run_01",
   "original_event_ref": "outbox_01",
   "external_reference": "provider_request_7788",
-  "reason": "timeout_after_request_submission",
+  "reason": "请求提交后超时",
   "status": "reconciling",
   "observed_external_state": "unknown",
-  "next_check_at": "2026-10-18T08:02:00Z",
-  "retry_blocked": true,
-  "attempts": 1,
-  "resolved_receipt_ref": null,
-  "human_task_ref": null
+  "retry_blocked": true
 }
-```
+~~~
 
-## 21. Compensation plan
-
-```json
+~~~json
 {
   "schema_version": "1.0",
   "compensation_id": "compensation_01",
   "run_id": "run_01",
   "original_event_ref": "outbox_01",
-  "original_payload_hash": "sha256:example",
-  "reason": "The completed external action must be offset",
+  "reason": "已完成动作需要被业务补偿",
   "action": "send_correction",
-  "arguments_ref": "artifact:correction_message_01",
   "authorization_refs": ["human_task_02"],
   "idempotency_key": "outbox_01:compensation:v1",
   "status": "pending",
-  "expected_result": "A correction receipt is recorded",
-  "reconciliation_policy_ref": "policy:message_reconciliation_v1",
-  "residual_risk": "The original recipient may already have acted on the first message"
+  "residual_risk": "接收方可能已经依据原消息行动"
 }
-```
+~~~
 
-Compensation is a new side effect. It must not mutate the historical record of the original event.
+恢复 Action：retry、fallback、degrade、resume、rollback_internal、compensate、reconcile、human_handoff、fail_closed。
+
+## 13. 状态流转
+
+~~~text
+InputEnvelope → GoalSpec → SupervisorDecision → DomainTask
+  → DomainResult / CapabilityRequest
+  → Validate → Fact/Artifact → SupervisorReview
+      → Continue / Clarify / Fallback / Human / Finalize
+      → Deterministic Gate → Outbox
+
+任何 Failure/Unknown Side Effect
+  → RecoveryDecision
+  → Retry / Fallback / Degrade / Resume
+     / Internal Rollback / Reconcile / Compensate / Human / Fail Closed
+~~~
+
+## 14. 校验不变量
+
+- ID 在类型内唯一且不可变；
+- Reference 必须在 Tenant/Auth 边界内可解析；
+- Worker 只能产出 Domain 声明能力；
+- completed 不能直接创建 Outbox；
+- 高风险 Claim 必须引用有效 Fact；
+- Expired Fact 不能满足 Completion；
+- Artifact 保存 Input、Model/Provider、Provenance、Hash；
+- Reason 不是私有推理；
+- Unknown 不得用 Placeholder 冒充 Fact；
+- Resume 使用新 Capability Reference，避免重复；
+- Side Effect 使用 Payload Hash 和 Idempotency；
+- Approval 绑定精确 Candidate Hash，内容变化即失效；
+- Compensation 是新动作，不改写原始历史。

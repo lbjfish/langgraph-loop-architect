@@ -1,314 +1,199 @@
-# Evaluation, production readiness, and rollout
+# Agent 架构评测、生产验收与上线
 
-Architecture quality is demonstrated by observable behavior, not by the number of agents or diagrams.
+架构质量由可观察行为证明，不由 Agent 数量或图的复杂度证明。
 
-## 1. Requirement-to-evidence matrix
+## 1. 要求—证据矩阵
 
-For each business requirement, record:
-
-| Field | Meaning |
+| 字段 | 含义 |
 |---|---|
-| Requirement | Exact user or business need |
-| Risk | Consequence of failure |
-| Owner | Supervisor, domain, deterministic service, or human |
-| Contract | JSON object and field proving the behavior |
-| Test | Unit, contract, graph, E2E, or evaluation case |
-| Metric | Threshold or expected result |
-| Fallback | Safe behavior if unmet |
-
-## 2. Test layers
-
-### Unit tests
-
-Test deterministic logic directly:
-
-- arithmetic, dates, TTL, currency, dimensions, quotas;
-- capability and status enums;
-- authority/freshness conflict resolution;
-- idempotency key generation;
-- policy and permission gates;
-- loop budgets and repeat detection;
-- safe error classification.
-
-### Contract tests
-
-- Every JSON example validates against the production schema.
-- Every domain entry declares only supported capabilities.
-- Every Worker result uses declared output types.
-- Tool adapters map API success and error responses consistently.
-- Optional input semantics are documented and exercised.
-- References cannot cross tenant boundaries.
-- Unknown fields are rejected or versioned intentionally.
-
-### Graph tests
-
-- a single-domain fast path starts exactly one Worker and no unrelated domain;
-- truly independent tasks run in the same wave;
-- a dependency is discovered after a partial result;
-- a missing capability is already in state and avoids a duplicate call;
-- the Supervisor selects the correct provider domain;
-- the original Worker resumes with the new reference;
-- verified partial facts survive a later Worker failure or capability request;
-- the Supervisor continues looping while required outputs remain unresolved;
-- stale facts trigger refresh;
-- conflicting facts trigger authority resolution or clarification;
-- a rejected Worker result does not become verified state;
-- maximum cycles, time, token/cost budget, and repeated-decision protection work;
-- checkpoint recovery does not duplicate model charges, tool charges, generation calls, or side effects.
-
-### End-to-end tests
-
-Use realistic channel inputs, real schemas, stubbed or sandbox APIs, persistence, and outbound reconciliation. Prove:
-
-- text, voice, image, and mixed input when applicable;
-- language detection and target-language output;
-- privacy and media lifecycle;
-- partial provider outage and local fallback;
-- human approval pause and resume;
-- exact outbound content hash;
-- clean restart and recovery;
-- concurrent conversations and tenant isolation.
-
-Do not create modality tests for capabilities marked `not_applicable`. A text-only business needs text-path tests, not artificial ASR/TTS coverage.
-
-### Live smoke tests
-
-Only when explicitly authorized and safe:
-
-- use a non-production tenant or sandbox;
-- cap cost and tool calls;
-- do not send to a real customer without explicit permission;
-- record provider, model, parameters, latency, cost, and result ID;
-- do not blindly retry a timeout when billing or side-effect state is unknown.
-
-## 3. Golden evaluation set
-
-Build examples across these dimensions:
-
-- clear versus ambiguous intent;
-- exact versus misspelled entity;
-- one domain versus several domains;
-- fixed, optional, and runtime-discovered dependencies;
-- fresh, stale, absent, and conflicting facts;
-- read-only versus irreversible side effects;
-- low versus high confidence;
-- normal, adversarial, and prompt-injected tool content;
-- normal latency, timeout, rate limit, and partial failure;
-- approved, rejected, expired, and modified human-review candidates.
-
-Include counterexamples where the correct action is to ask, refuse, or return a partial result.
-
-## 4. Pattern-specific metrics
-
-### Full tool exposure
-
-- tool-selection accuracy;
-- wrong-domain and wrong-argument rate;
-- prompt/tool-schema token cost;
-- p50/p95 latency as tool count grows.
-
-### Progressive disclosure
-
-- domain-selection accuracy;
-- local tool-selection accuracy;
-- unnecessary domain dispatch rate;
-- dependency recovery success;
-- Supervisor cycles per request;
-- end-to-end latency versus a flat baseline.
-
-### Dynamic retrieval
-
-- retrieval recall@k;
-- permission-filter correctness;
-- reranking accuracy;
-- no-result recovery rate;
-- retrieval and total latency;
-- stale metadata rate.
+| Requirement | 精确业务要求 |
+| Risk | 失败后果 |
+| Owner | Supervisor、Domain、Deterministic Service、Human |
+| Contract | 能证明行为的 JSON 对象/字段 |
+| Test | Unit、Contract、Graph、E2E、Eval |
+| Metric | 阈值 |
+| Fallback | 未满足时的安全行为 |
 
-### Deterministic workflow
+## 2. 测试层
 
-- transition coverage;
-- invalid transition rejection;
-- policy escape rate;
-- recovery and replay correctness.
-
-### ReAct loop
-
-- task success;
-- action efficiency;
-- repeated-action rate;
-- average turns/tokens/cost;
-- loop-budget termination quality;
-- unsafe tool attempt rate.
-
-## 5. Business and reliability metrics
-
-Choose metrics relevant to the product:
-
-- task completion and human acceptance;
-- critical fact accuracy;
-- unsupported claim rate;
-- clarification and handoff rate;
-- p50/p95/p99 response time;
-- per-run model and external-service cost;
-- tool/API error and retry rate;
-- checkpoint recovery success;
-- duplicate side effects;
-- stale-fact send rate;
-- policy violations and privacy incidents;
-- customer conversion, resolution, or completion outcome.
-
-For high-risk fields, use fail-closed thresholds rather than an average score.
-
-## 6. Observability
-
-Record observable execution data:
-
-- trace, run, conversation, task, decision, and checkpoint IDs;
-- graph and schema versions;
-- selected pattern, domain entries, and task waves;
-- tool name, sanitized argument summary, status, latency, retry, and authority;
-- model/provider, parameters, tokens, latency, and cost;
-- fact and artifact references, hashes, TTL, and provenance;
-- Supervisor action and concise reason;
-- policy results, approvals, and outbound receipts.
-
-Do not log credentials, authorization headers, unnecessary personal data, raw private media, or private model reasoning.
-
-## 7. Performance analysis
-
-Break total latency into:
-
-```text
-gateway + normalization + Supervisor decisions + domain work
-+ tool calls + queueing + generation + validation + approval + send
-```
-
-Compare architectures using the same scenario set:
-
-- flat one-Agent baseline;
-- selected architecture;
-- deterministic fast-path subset;
-- outage/degraded mode.
-
-Report both accuracy and latency. A design that improves tool accuracy but triples p95 for trivial requests may need a hybrid fast path.
+### Unit
 
-Useful optimizations:
-
-- cache stable domain descriptions and schemas;
-- reuse valid facts from state;
-- batch independent reads;
-- execute deterministic local routing without an LLM;
-- keep Supervisor context to verified summaries and references;
-- use smaller models for extraction and local classification;
-- limit retrieval to the selected domain;
-- avoid generating media before fact and permission gates pass.
-
-## 8. Security review
-
-Threat-model:
-
-- prompt injection in user, webpage, OCR, or tool output;
-- tool argument smuggling;
-- cross-tenant reference access;
-- overprivileged Worker credentials;
-- unsafe dynamically retrieved tools;
-- duplicate writes and replay;
-- generated media impersonating facts or evidence;
-- approval candidate changed after approval;
-- stale policy or pricing facts;
-- sensitive state sent to external observability services.
-
-Required mitigations vary by risk but commonly include least privilege, allowlists, hard metadata filters, schema validation, provenance, immutable hashes, idempotency, TTL checks, redaction, and human approval.
-
-## 9. Failure injection
-
-Deliberately test:
-
-- malformed JSON from a model;
-- a tool returning prompt-like instructions;
-- one domain returning a conflicting fact;
-- an optional input absent in one goal and essential in another;
-- timeouts before and after an unknown side effect;
-- expired approval;
-- state restored from an older checkpoint;
-- the same event delivered twice;
-- a capability request that no domain can provide;
-- a Supervisor repeating the same decision.
-
-### Recovery and human-control tests
-
-- retry is rejected when the side-effect or billing outcome is unknown;
-- an equivalent fallback revalidates the same output contract;
-- degraded output identifies its reduced guarantee and required disclosure;
-- internal rollback cannot mark an external event undone;
-- unknown external outcomes enter reconciliation and block duplicate retry;
-- compensation uses its own authorization, idempotency key, receipt, and reconciliation;
-- partial verified facts remain usable while unresolved outputs stay incomplete;
-- HumanTask binds to the exact facts, artifacts, policy result, and candidate hash;
-- changed or expired facts/artifacts invalidate approval;
-- human approve, reject, revise, timeout, escalation, cancellation, and resume paths are exercised;
-- dual control requires distinct authorized reviewers where configured;
-- fail-closed paths produce neither unsupported claims nor outbound effects.
-
-### Capability-boundary tests
-
-For every required or optional capability:
-
-- accepted input and provided output types validate;
-- authority, permissions, side-effect class, TTL, SLO, and cost limits are enforced;
-- unavailable, blocked, degraded, and unknown states route correctly;
-- every declared fallback is tested;
-- the highest permitted degradation level is respected;
-- human triggers and acceptance thresholds are observable;
-- `not_applicable` capabilities create no runtime nodes, provider calls, tests, or cost.
-
-## 10. Rollout stages
-
-### Stage 0: offline architecture evaluation
-
-- mock tools and fixture state;
-- contract and graph tests;
-- compare at least two patterns;
-- prove fallbacks and loop limits.
-
-### Stage 1: shadow mode
-
-- receive production-like inputs but do not act;
-- compare recommended actions with human or existing-system decisions;
-- measure tool/domain selection, latency, and unsupported claims.
-
-### Stage 2: read-only assistance
-
-- allow verified lookups and drafts;
-- require humans for all sends and writes;
-- reconcile every result.
-
-### Stage 3: limited automation
-
-- automate low-risk, high-confidence intents;
-- keep high-risk cases behind approval;
-- use tenant/region allowlists and rollback switches.
-
-### Stage 4: expanded autonomy
-
-- expand only when error, incident, latency, and business metrics meet thresholds;
-- preserve kill switches, audit, and human escalation.
-
-## 11. Acceptance checklist
-
-- The selected architecture is simpler than or clearly superior to alternatives.
-- Every candidate capability is classified required, optional, deferred, or not applicable.
-- Every component has a single owner and prohibited responsibilities.
-- JSON contracts validate and state transitions are explicit.
-- Optional dependencies are not globally hard-coded.
-- Dynamic dependency recovery is demonstrated.
-- Facts, claims, artifacts, approvals, and side effects are separate.
-- Loop, cost, retry, and time limits are defined.
-- High-risk actions fail closed.
-- Checkpoint recovery and idempotency are tested.
-- Degraded mode still provides a truthful usable result.
-- Retry, fallback, degradation, rollback, compensation, reconciliation, human handoff, and fail-closed semantics are not conflated.
-- Human intervention has explicit triggers, roles, SLA/expiry, candidate binding, decisions, revalidation, resume, and audit where applicable.
-- Metrics can identify whether accuracy gains justify latency and cost.
-- The current implementation is not misrepresented as the target architecture.
+- Amount/Date/TTL/Dimension/Quota；
+- Capability/Status Enum；
+- Authority/Freshness Conflict；
+- Idempotency Key；
+- Policy/Permission Gate；
+- Loop Budget/Repeat Detection；
+- Error Classification。
+
+### Contract
+
+- 所有 JSON 通过 Schema；
+- Domain Entry 只声明支持能力；
+- Worker 只返回声明输出；
+- Tool Adapter 正确映射成功/错误；
+- Optional Input 语义有测试；
+- Reference 不跨 Tenant；
+- 未知字段按策略拒绝或版本化。
+
+### Graph
+
+- 单领域 Fast-path 只启动一个 Worker；
+- 独立任务同波次；
+- 部分结果后发现动态依赖；
+- State 已有能力时不重复调用；
+- Supervisor 选择正确 Domain；
+- 原 Worker 获得引用后 Resume；
+- 后续失败不丢 verified partial facts；
+- required 输出未满足时继续 Loop；
+- Stale Fact 刷新；
+- Conflict 按 Authority 或 Clarification；
+- Rejected Result 不进入 verified；
+- 最大 Cycle、Time、Token/Cost、Repeat Protection；
+- Checkpoint 不重复模型、Tool、生成费用或 Side Effect。
+
+### E2E
+
+按适用性覆盖 Text/Voice/Image/Mixed、Language/Locale、Privacy/Media Lifecycle、Provider Outage、Local Fallback、Human Pause/Resume、Payload Hash、Restart、Concurrent Conversation 和 Tenant Isolation。
+
+not_applicable 模态不得创建无意义测试。
+
+### Live Smoke
+
+只有明确授权时使用 Sandbox/Non-production Tenant，限制成本和 Tool Call，不向真实客户发送；记录 Provider、Model、Parameter、Latency、Cost 和 Result ID。计费/副作用未知的 Timeout 不得盲目重试。
+
+## 3. Golden Set
+
+覆盖：
+
+- Clear/Ambiguous Intent；
+- Exact/Misspelled Entity；
+- 单域/多域；
+- Fixed/Optional/Runtime Dependency；
+- Fresh/Stale/Missing/Conflicting Fact；
+- Read-only/Irreversible Side Effect；
+- Low/High Confidence；
+- Normal/Adversarial/Prompt-injected Tool Content；
+- Normal/Timeout/429/Partial Failure；
+- Approval Approve/Reject/Expire/Modified Candidate。
+
+正确行为可以是澄清、拒绝或返回部分结果。
+
+## 4. 模式指标
+
+### Full Tool
+
+Tool Selection、Wrong Domain/Argument、Schema Token、随 Tool 数增长的 p50/p95。
+
+### Progressive Domain
+
+Domain Selection、Local Tool Selection、Unnecessary Dispatch、Dependency Recovery、Supervisor Cycle、相对 Flat Baseline 的 Latency。
+
+### Retrieval
+
+Recall@k、Permission Filter、Rerank、No-result Recovery、Retrieval/Total Latency、Stale Metadata。
+
+### Deterministic Workflow
+
+Transition Coverage、Invalid Transition、Policy Escape、Recovery/Replay。
+
+### ReAct
+
+Task Success、Action Efficiency、Repeat Action、Turn/Token/Cost、Budget Termination、Unsafe Attempt。
+
+## 5. 业务与可靠性指标
+
+Task Completion、Human Acceptance、Critical Fact Accuracy、Unsupported Claim、Clarification/Handoff、p50/p95/p99、Cost、Tool Error/Retry、Checkpoint Recovery、Duplicate Side Effect、Stale Fact Send、Policy/Privacy Incident，以及业务 Conversion/Resolution。
+
+高风险字段使用 Fail-closed，不使用平均分掩盖错误。
+
+## 6. 可观测性
+
+记录 Trace/Run/Conversation/Task/Decision/Checkpoint、Graph/Schema Version、Pattern/Domain/Wave、Tool 与脱敏参数摘要、Authority/TTL、Model/Provider/Token/Cost、Fact/Artifact/Hash、Supervisor Action/Reason、Policy、Approval 和 Outbound Receipt。
+
+禁止记录密钥、Authorization Header、不必要个人数据、原始隐私媒体和私有模型推理。
+
+## 7. 性能
+
+~~~text
+Gateway + Normalize + Supervisor Decision + Domain Work
++ Tool + Queue + Generation + Validation + Human + Send
+~~~
+
+用相同场景比较 Flat Baseline、选定架构、Deterministic Fast-path 和 Degraded Mode。准确率提高但简单请求 p95 成倍增加时，应增加快路径。
+
+优化：
+
+- Cache 稳定 Domain Description/Schema；
+- 复用有效 Fact；
+- 并发独立 Read；
+- 明确操作走确定性 Router；
+- Supervisor 只看已验证摘要和引用；
+- 抽取/分类用小模型；
+- Retrieval 限制在已选 Domain；
+- Fact/Permission 未通过前不生成昂贵媒体。
+
+## 8. 安全
+
+威胁：User/Web/OCR/Tool Prompt Injection、Argument Smuggling、Cross-tenant、Overprivileged Worker、Unsafe Retrieved Tool、Duplicate/Replay、Generated Artifact 冒充事实、Approval 后候选变化、Stale Policy/Price、敏感 State 进入外部观测平台。
+
+按风险使用 Least Privilege、Allowlist、Hard Filter、Schema、Provenance、Hash、Idempotency、TTL、Redaction 和 HumanTask。
+
+## 9. 故障注入
+
+- Malformed JSON；
+- Tool 返回指令型文本；
+- Domain Fact 冲突；
+- Optional Input 在不同 Goal 下变成必需；
+- Side Effect 前后 Timeout；
+- Expired Approval；
+- Old Checkpoint；
+- Duplicate Event；
+- 无 Domain 能提供 Capability；
+- Supervisor 重复相同 Decision。
+
+### 恢复与人工
+
+- Side Effect/计费未知时禁止 Retry；
+- Equivalent Fallback 重新校验同一契约；
+- Degrade 披露降低的保证；
+- Internal Rollback 不得宣称外部事件已撤销；
+- Unknown Effect 进入 Reconciliation；
+- Compensation 有独立 Authorization、Idempotency、Receipt；
+- Partial Fact 可用而 required 输出仍 incomplete；
+- HumanTask 绑定 Fact/Artifact/Policy/Candidate Hash；
+- Fact/Artifact 改变会使 Approval 失效；
+- Approve/Reject/Revise/Timeout/Escalate/Cancel/Resume 可用；
+- 配置双人审批时必须是不同有权限人员；
+- Fail-closed 不产生 Claim 或 Side Effect。
+
+### 能力边界
+
+对每个 required/optional 能力测试 Input/Output、Authority、Permission、Side-effect、TTL、SLO、Cost、Availability State、每条 Fallback、最高 Degrade Level 和 Human Trigger。not_applicable 能力不得产生节点、调用、测试或成本。
+
+## 10. 上线
+
+1. Offline Mock + Contract/Graph Eval；
+2. Shadow；
+3. Read-only Draft + 全量 Human Send；
+4. Limited Low-risk Automation；
+5. 达到 Error/Incident/Latency/Business Gate 后扩大。
+
+始终保留 Kill Switch、Audit 和 Human Escalation。
+
+## 11. 验收
+
+- 选定架构确实优于更简单方案；
+- 能力已分为 required/optional/deferred/not_applicable；
+- 组件单一所有权和禁止职责清楚；
+- JSON 和状态迁移可验证；
+- Optional Dependency 未被写死；
+- Dynamic Dependency Recovery 已证明；
+- Fact/Claim/Artifact/Approval/SideEffect 分离；
+- Loop/Cost/Retry/Time Limit 明确；
+- 高风险 Fail Closed；
+- Checkpoint/Idempotency 可验证；
+- 降级仍真实可用；
+- Retry/Fallback/Degrade/Rollback/Compensate/Reconcile/Human 不混用；
+- 人工流程包含 Trigger、Role、SLA、Expiry、Binding、Revalidate、Resume 和 Audit；
+- 当前实现不冒充目标架构。
