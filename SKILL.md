@@ -24,8 +24,10 @@ Produce an evidence-based architecture decision that answers:
 Read only the references needed for the request:
 
 - Always read [references/architecture-selection.md](references/architecture-selection.md) when choosing or comparing orchestration strategies.
+- Read [references/capability-boundaries.md](references/capability-boundaries.md) for every production-oriented architecture or whenever the user asks what capabilities are required, optional, unavailable, or out of scope. It prevents example-specific capabilities such as ASR/TTS from becoming universal requirements.
 - Read [references/supervisor-loop.md](references/supervisor-loop.md) for Supervisor/Worker ownership, progressive disclosure, optional dependencies, parallel waves, checkpoints, human gates, or LangGraph topology.
 - Read [references/json-contracts.md](references/json-contracts.md) whenever the user asks for JSON design, state transitions, APIs between agents, persistence, replay, or auditability.
+- Read [references/resilience-human-control.md](references/resilience-human-control.md) for retry, fallback, degradation, rollback, compensation, reconciliation, partial results, side effects, or human intervention.
 - Read [references/evaluation-playbook.md](references/evaluation-playbook.md) for implementation plans, E2E tests, performance, safety, observability, rollout, or production readiness.
 - Read [references/delivery-template.md](references/delivery-template.md) when producing a complete technical proposal or `/plan`-style deliverable.
 - Read [references/worked-examples.md](references/worked-examples.md) only when examples would materially help select or explain a pattern.
@@ -44,6 +46,8 @@ Extract or infer, while marking assumptions:
 - latency, throughput, cost, context, privacy, audit, and availability constraints;
 - required human decisions and unacceptable failure modes;
 - current implementation, deployment environment, and fallback expectations.
+
+For every candidate capability, classify it as `required`, `optional`, `deferred`, or `not_applicable`. A modality or specialist service is never required merely because it appears in an example.
 
 Ask a question only when a missing fact would materially change the architecture. Otherwise state the assumption and continue.
 
@@ -78,7 +82,13 @@ For progressive disclosure, preserve these boundaries:
 - Supervisor selects the next domain, reviews every result, and decides whether to continue or stop.
 - Deterministic gates authorize facts, permissions, money, media provenance, and side effects.
 
-### 5. Design the loop and JSON transitions
+### 5. Define capability boundaries
+
+For each applicable capability, name its owner, accepted inputs, provided outputs, authority, permissions, side-effect class, SLO, cost budget, failure modes, fallback chain, recovery action, human trigger, observability, and acceptance test. Keep non-applicable capabilities out of the runtime design.
+
+Treat ASR, TTS, language detection, translation, OCR, vision, image/video generation, 3D rendering, payments, and notifications as scenario-dependent capabilities. Add them only when the user's channels, modalities, or outputs require them.
+
+### 6. Design the loop and JSON transitions
 
 Model the observable cycle rather than hidden chain-of-thought:
 
@@ -92,7 +102,7 @@ Input → Goal → Supervisor Decision → Domain Task → Domain Result
 
 Use typed contracts from the JSON reference. Store concise decision reasons, evidence references, and status changes; never request or persist private reasoning traces.
 
-### 6. Prove dynamic dependency behavior
+### 7. Prove dynamic dependency behavior
 
 Simulate at least:
 
@@ -104,7 +114,7 @@ Simulate at least:
 
 Show which tasks are truly independent and may run in the same wave. Do not call dependent work “parallel.”
 
-### 7. Close production concerns
+### 8. Close production concerns
 
 Define stopping conditions, loop budgets, retry ownership, checkpoint behavior, freshness rules, fallbacks, observability, contract tests, graph tests, golden cases, security boundaries, and rollout stages. If the request is design-only, do not add framework code; use plain-text flow diagrams and JSON examples unless the user requests code.
 
@@ -120,6 +130,8 @@ Define stopping conditions, loop budgets, retry ownership, checkpoint behavior, 
 - A missing fact may produce clarification, partial output, or safe refusal; it must not be invented.
 - Add a registry or retrieval layer only when scale or churn justifies its recall and latency cost.
 - Multi-agent is a logical responsibility boundary; it does not require a separate expensive LLM call for every Worker.
+- Example-specific capabilities do not become framework requirements. Mark them `not_applicable` and omit their nodes, contracts, dependencies, tests, and fallbacks when the scenario does not need them.
+- A checkpoint can restore internal orchestration state but cannot undo an external side effect. Use compensation or reconciliation for real-world effects.
 
 ## Deliverable standard
 
@@ -130,9 +142,10 @@ Lead with the recommendation and why. Include:
 - frozen component/ownership table;
 - plain-text end-to-end and loop diagrams;
 - tool exposure and dependency rules;
+- capability boundary matrix with required/optional/deferred/not-applicable classifications;
 - JSON contracts and state transitions;
 - one end-to-end scenario trace;
-- latency, cost, security, privacy, and fallback decisions;
+- latency, cost, security, privacy, fallback, degradation, rollback/compensation, and human-control decisions where applicable;
 - unit, contract, graph, E2E, and evaluation plan;
 - phased implementation and measurable acceptance criteria.
 

@@ -42,17 +42,19 @@ Test deterministic logic directly:
 
 ### Graph tests
 
-- one-domain happy path;
+- a single-domain fast path starts exactly one Worker and no unrelated domain;
 - truly independent tasks run in the same wave;
 - a dependency is discovered after a partial result;
 - a missing capability is already in state and avoids a duplicate call;
 - the Supervisor selects the correct provider domain;
 - the original Worker resumes with the new reference;
+- verified partial facts survive a later Worker failure or capability request;
+- the Supervisor continues looping while required outputs remain unresolved;
 - stale facts trigger refresh;
 - conflicting facts trigger authority resolution or clarification;
 - a rejected Worker result does not become verified state;
-- loop budget and repeated-decision protection work;
-- checkpoint recovery does not duplicate cost or side effects.
+- maximum cycles, time, token/cost budget, and repeated-decision protection work;
+- checkpoint recovery does not duplicate model charges, tool charges, generation calls, or side effects.
 
 ### End-to-end tests
 
@@ -66,6 +68,8 @@ Use realistic channel inputs, real schemas, stubbed or sandbox APIs, persistence
 - exact outbound content hash;
 - clean restart and recovery;
 - concurrent conversations and tenant isolation.
+
+Do not create modality tests for capabilities marked `not_applicable`. A text-only business needs text-path tests, not artificial ASR/TTS coverage.
 
 ### Live smoke tests
 
@@ -232,6 +236,33 @@ Deliberately test:
 - a capability request that no domain can provide;
 - a Supervisor repeating the same decision.
 
+### Recovery and human-control tests
+
+- retry is rejected when the side-effect or billing outcome is unknown;
+- an equivalent fallback revalidates the same output contract;
+- degraded output identifies its reduced guarantee and required disclosure;
+- internal rollback cannot mark an external event undone;
+- unknown external outcomes enter reconciliation and block duplicate retry;
+- compensation uses its own authorization, idempotency key, receipt, and reconciliation;
+- partial verified facts remain usable while unresolved outputs stay incomplete;
+- HumanTask binds to the exact facts, artifacts, policy result, and candidate hash;
+- changed or expired facts/artifacts invalidate approval;
+- human approve, reject, revise, timeout, escalation, cancellation, and resume paths are exercised;
+- dual control requires distinct authorized reviewers where configured;
+- fail-closed paths produce neither unsupported claims nor outbound effects.
+
+### Capability-boundary tests
+
+For every required or optional capability:
+
+- accepted input and provided output types validate;
+- authority, permissions, side-effect class, TTL, SLO, and cost limits are enforced;
+- unavailable, blocked, degraded, and unknown states route correctly;
+- every declared fallback is tested;
+- the highest permitted degradation level is respected;
+- human triggers and acceptance thresholds are observable;
+- `not_applicable` capabilities create no runtime nodes, provider calls, tests, or cost.
+
 ## 10. Rollout stages
 
 ### Stage 0: offline architecture evaluation
@@ -267,6 +298,7 @@ Deliberately test:
 ## 11. Acceptance checklist
 
 - The selected architecture is simpler than or clearly superior to alternatives.
+- Every candidate capability is classified required, optional, deferred, or not applicable.
 - Every component has a single owner and prohibited responsibilities.
 - JSON contracts validate and state transitions are explicit.
 - Optional dependencies are not globally hard-coded.
@@ -276,5 +308,7 @@ Deliberately test:
 - High-risk actions fail closed.
 - Checkpoint recovery and idempotency are tested.
 - Degraded mode still provides a truthful usable result.
+- Retry, fallback, degradation, rollback, compensation, reconciliation, human handoff, and fail-closed semantics are not conflated.
+- Human intervention has explicit triggers, roles, SLA/expiry, candidate binding, decisions, revalidation, resume, and audit where applicable.
 - Metrics can identify whether accuracy gains justify latency and cost.
 - The current implementation is not misrepresented as the target architecture.

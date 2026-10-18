@@ -9,6 +9,7 @@ Capture these dimensions before recommending an architecture:
 | Dimension | Questions |
 |---|---|
 | Outcome | What decision, artifact, transaction, or response must be produced? |
+| Modalities | Are inputs/outputs text, voice, image, video, documents, 3D, or none of these? |
 | Tools | How many tools exist in total and per coherent domain? |
 | Domains | Can tools be partitioned by stable business ownership and vocabulary? |
 | Churn | How often are tools added, removed, renamed, or versioned? |
@@ -19,6 +20,7 @@ Capture these dimensions before recommending an architecture:
 | Context | Can all tool schemas and relevant facts fit without crowding the model? |
 | Audit | Must decisions, facts, approvals, and retries be replayable? |
 | Availability | What happens when a model, API, media service, or database is unavailable? |
+| Recovery | Which effects can be retried, rolled back, compensated, reconciled, or handed to a human? |
 | Organization | Are domains maintained by different teams with different permissions? |
 
 ## 2. Pattern overview

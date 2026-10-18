@@ -61,6 +61,87 @@ This is a small static deployment configuration, not a runtime registry of concr
 
 `accepts` lists input capability types the domain can understand; it does not mean every item is required. Required and optional semantics belong to local Tool Contracts and the current task objective. `provides` lists output capability types the domain can produce.
 
+### 2.1 Capability profile
+
+Create profiles only for capabilities classified `required`, `optional`, or `deferred`. A `not_applicable` profile may be retained in an architecture inventory but must not create runtime nodes or dependencies.
+
+```json
+{
+  "schema_version": "1.0",
+  "capability_id": "capability:product_lookup",
+  "name": "ProductLookup",
+  "classification": "required",
+  "business_purpose": "Resolve a product mention to an authoritative product identity",
+  "owner": "catalog_domain",
+  "implementation_kind": "external_service",
+  "accepts": ["ProductMention", "SKU"],
+  "provides": ["ProductIdentity", "ProductProfile"],
+  "authority": "authoritative_fact",
+  "permissions": ["tenant_catalog_read"],
+  "side_effect_class": "none",
+  "freshness_policy": "catalog_versioned",
+  "slo": {
+    "p95_latency_ms": 800,
+    "availability_target": 0.999
+  },
+  "budget": {
+    "max_cost_usd": 0.01
+  },
+  "failure_modes": ["ambiguous_entity", "timeout", "provider_unavailable"],
+  "resilience_policy_ref": "resilience:product_lookup_v1",
+  "human_policy_ref": "human:catalog_exception_v1",
+  "acceptance_refs": ["test:product_lookup_contract", "eval:ambiguous_product"]
+}
+```
+
+Recommended classification enum:
+
+- `required`
+- `optional`
+- `deferred`
+- `not_applicable`
+
+Recommended side-effect enum:
+
+- `none`
+- `reversible`
+- `compensatable`
+- `irreversible`
+
+### 2.2 Resilience policy
+
+```json
+{
+  "schema_version": "1.0",
+  "policy_id": "resilience:product_lookup_v1",
+  "capability_ref": "capability:product_lookup",
+  "allowed_degradation_level": "D4",
+  "rules": [
+    {
+      "failure_class": "timeout_before_execution",
+      "action": "retry",
+      "max_attempts": 1,
+      "backoff_ms": 200
+    },
+    {
+      "failure_class": "provider_unavailable",
+      "action": "fallback",
+      "target": "read_only_catalog_replica"
+    },
+    {
+      "failure_class": "ambiguous_entity",
+      "action": "clarify_user"
+    },
+    {
+      "failure_class": "all_implementations_unavailable",
+      "action": "human_handoff"
+    }
+  ],
+  "fail_closed_conditions": ["no_authoritative_identity"],
+  "required_disclosures": []
+}
+```
+
 ## 3. Input envelope
 
 ```json
@@ -368,6 +449,9 @@ For volatile facts such as price, inventory, delivery, permissions, or account s
   "conflicts": [],
   "decision_refs": ["decision_01", "review_02"],
   "approval_refs": [],
+  "recovery_refs": [],
+  "human_task_refs": [],
+  "reconciliation_refs": [],
   "budget": {
     "supervisor_cycles": 2,
     "elapsed_ms": 900,
@@ -473,6 +557,16 @@ SupervisorReview
                deterministic gates
                        ↓
                   OutboxEvent
+
+Any node failure or uncertain side effect
+    ↓
+RecoveryDecision
+    ├─ retry / fallback / degrade / resume
+    ├─ rollback internal state
+    ├─ reconcile external outcome
+    ├─ compensate completed effect
+    ├─ create HumanTask
+    └─ fail closed
 ```
 
 ## 17. Validation invariants
@@ -489,3 +583,112 @@ SupervisorReview
 - A resumed task receives new capability references instead of duplicating prior results.
 - Side effects use immutable payload hashes and idempotency keys.
 - Approval is bound to the exact candidate hash and expires when facts or artifacts change.
+
+## 18. Recovery decision
+
+```json
+{
+  "schema_version": "1.0",
+  "recovery_id": "recovery_01",
+  "run_id": "run_01",
+  "trigger": {
+    "failure_class": "provider_unavailable",
+    "task_ref": "task_catalog_01",
+    "side_effect_state": "none"
+  },
+  "action": "fallback",
+  "target": "read_only_catalog_replica",
+  "preserve_refs": ["fact:consent_decision_01"],
+  "invalidate_refs": [],
+  "resume_from_checkpoint": "checkpoint_03",
+  "requires_human": false,
+  "reason": "The primary provider is unavailable and the replica satisfies the same read-only contract",
+  "created_at": "2026-10-18T08:00:03Z"
+}
+```
+
+Recommended recovery actions:
+
+- `retry`
+- `fallback`
+- `degrade`
+- `resume`
+- `rollback_internal`
+- `compensate`
+- `reconcile`
+- `human_handoff`
+- `fail_closed`
+
+## 19. Human task
+
+`ApprovalRequest` covers approval of a prepared candidate. `HumanTask` is broader and may request clarification, exception handling, manual execution, incident takeover, compensation, or dual control.
+
+```json
+{
+  "schema_version": "1.0",
+  "human_task_id": "human_task_01",
+  "run_id": "run_01",
+  "task_type": "approval",
+  "risk_level": "high",
+  "queue": "tenant_acme_high_risk",
+  "priority": "urgent",
+  "eligible_roles": ["senior_operator"],
+  "required_approvals": 1,
+  "candidate_ref": "response_plan_01",
+  "candidate_hash": "sha256:example",
+  "fact_refs": ["fact:product_dimensions_01"],
+  "artifact_refs": ["artifact:visualization_01"],
+  "policy_refs": ["policy:private_media_send_v2"],
+  "allowed_actions": ["approve", "reject", "request_revision", "escalate", "cancel"],
+  "status": "pending",
+  "created_at": "2026-10-18T08:01:00Z",
+  "due_at": "2026-10-18T08:11:00Z",
+  "expires_at": "2026-10-18T08:16:00Z",
+  "escalation_queue": "tenant_acme_incident"
+}
+```
+
+## 20. Reconciliation record
+
+Use when an external outcome is unknown. Do not retry the original side effect until reconciliation policy allows it.
+
+```json
+{
+  "schema_version": "1.0",
+  "reconciliation_id": "reconciliation_01",
+  "run_id": "run_01",
+  "original_event_ref": "outbox_01",
+  "external_reference": "provider_request_7788",
+  "reason": "timeout_after_request_submission",
+  "status": "reconciling",
+  "observed_external_state": "unknown",
+  "next_check_at": "2026-10-18T08:02:00Z",
+  "retry_blocked": true,
+  "attempts": 1,
+  "resolved_receipt_ref": null,
+  "human_task_ref": null
+}
+```
+
+## 21. Compensation plan
+
+```json
+{
+  "schema_version": "1.0",
+  "compensation_id": "compensation_01",
+  "run_id": "run_01",
+  "original_event_ref": "outbox_01",
+  "original_payload_hash": "sha256:example",
+  "reason": "The completed external action must be offset",
+  "action": "send_correction",
+  "arguments_ref": "artifact:correction_message_01",
+  "authorization_refs": ["human_task_02"],
+  "idempotency_key": "outbox_01:compensation:v1",
+  "status": "pending",
+  "expected_result": "A correction receipt is recorded",
+  "reconciliation_policy_ref": "policy:message_reconciliation_v1",
+  "residual_risk": "The original recipient may already have acted on the first message"
+}
+```
+
+Compensation is a new side effect. It must not mutate the historical record of the original event.

@@ -120,6 +120,8 @@ It returns:
 
 A Worker may choose several tools in its own domain. It may perform a local loop. It may not silently reach into another domain.
 
+If a Worker produces valid partial outputs before becoming blocked or failing, return them explicitly. The Supervisor validates each output independently, preserves verified facts, and keeps the remaining required outputs unresolved.
+
 ## 6. Dynamic cross-domain dependency
 
 Dependencies may be discovered:
@@ -262,6 +264,8 @@ Budget exhaustion is not success. Return a partial verified result, ask a focuse
 
 ## 12. Failures and retries
 
+This table gives default routing only. Use `resilience-human-control.md` to distinguish retry, fallback, degradation, resume, internal rollback, business compensation, reconciliation, human handoff, and fail-closed behavior.
+
 | Failure | Owner | Default behavior |
 |---|---|---|
 | invalid JSON | contract validator | reject result and allow one constrained repair |
@@ -286,6 +290,8 @@ Use human approval for defined risk, not as a decorative final click. Common tri
 - high cost above threshold.
 
 The approval view should include the candidate, facts, sources, differences, warnings, policy result, cost, and immutable artifact hash. Resume from the same checkpoint and revalidate freshness before execution.
+
+A checkpoint restores internal orchestration state; it does not undo an external message, payment, signature, publication, or write. External effects require a verified undo operation, compensation, or reconciliation.
 
 ## 14. API Gateway boundary
 

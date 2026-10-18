@@ -61,6 +61,8 @@ A delivery Worker can answer generic delivery windows without customer identity.
 
 ## Example C: global commerce with multimodal generation
 
+This is a conditional specialist example, not the default architecture. Apply its ASR, TTS, vision, generation, consent, and media-provenance capabilities only when the scenario actually contains those modalities.
+
 ### Scenario
 
 - catalog, inventory, price, logistics, privacy, asset, vision, generation, and language domains;
@@ -89,7 +91,7 @@ Gateway → normalize language/media → Supervisor
                                        approval → outbox
 ```
 
-Use typed facts for SKU, dimensions, money, dates, and delivery. ASR transcribes input and verifies generated voice; TTS produces output speech. A simulation carries explicit provenance and disclosure.
+Use typed facts for SKU, dimensions, money, dates, and delivery. When voice is required, ASR transcribes input and may verify generated voice; TTS produces output speech. When voice is absent, omit both capabilities and use the ordinary text path. A simulation carries explicit provenance and disclosure.
 
 ### Why not a fixed DAG
 

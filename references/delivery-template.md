@@ -68,6 +68,16 @@ Explain why the runner-up was rejected now and what would make it preferable lat
 
 Remove components not used. Add a retriever only if the selection analysis justifies it.
 
+### Capability boundary matrix
+
+For every candidate capability, mark `required`, `optional`, `deferred`, or `not_applicable`, then document:
+
+| Capability | Classification | Owner | Accepts | Provides | Authority | Permissions | Side effect | SLO/cost | Fallback | Recovery | Human trigger | Tests |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|  |  |  |  |  |  |  |  |  |  |  |  |  |
+
+Do not include ASR, TTS, translation, vision, generation, 3D, payment, or notification merely because another example used it. Include only capabilities supported by the scenario's channels, inputs, outputs, and business requirements.
+
 ## 5. End-to-end flow
 
 Prefer a plain-text diagram unless the user requests Mermaid:
@@ -155,6 +165,19 @@ Include:
 
 Cover least privilege, untrusted tool output, tenant isolation, schema validation, provenance, TTL, idempotency, approval binding, media lifecycle, retries, and reconciliation.
 
+Also distinguish:
+
+- retry;
+- equivalent fallback;
+- reduced-quality or reduced-modality degradation;
+- internal state rollback;
+- external business compensation;
+- unknown-outcome reconciliation;
+- human handoff;
+- fail-closed behavior.
+
+State the highest permitted degradation level per critical capability. Describe the complete HumanTask lifecycle only where human intervention is justified: trigger, queue, role, SLA, expiry, candidate hash, allowed decisions, revalidation, resume, escalation, and audit.
+
 ## 12. Testing and metrics
 
 Specify unit, contract, graph, E2E, failure-injection, and golden-set coverage. Include architecture-specific metrics and fail-closed thresholds for high-risk fields.
@@ -171,6 +194,8 @@ Recommended phases:
 6. shadow, read-only, limited automation, expanded rollout.
 
 Every phase needs an observable acceptance test and rollback path.
+
+Multimodal or specialist services are conditional. Omit that phase when all such capabilities are `not_applicable`.
 
 ## 14. Final decision record
 
